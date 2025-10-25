@@ -1,5 +1,5 @@
 # 文件名: main.py (位于 data/plugins/astrbot_plugin_proactive_chat/ 目录下)
-# 版本: 0.9.5 (稳定版本，详细注释)
+# 版本: 0.9.6 多语言 TTS 预发布版 (Pre-release)
 
 # 导入标准库
 import random
@@ -72,8 +72,8 @@ def is_quiet_time(quiet_hours_str: str, tz: zoneinfo.ZoneInfo) -> bool:
 @star.register(
     name="proactive_chat",
     author="DBJD-CR & Gemini-2.5-Pro",
-    version="0.9.5",
-    desc="一个让机器人能够主动发起私聊的插件，拥有上下文感知、持久化会话、动态情绪、免打扰时段和健壮的TTS集成。"
+    version="0.9.6",
+    desc="一个让Bot能够发起主动消息的插件，拥有上下文感知、持久化会话、动态情绪、免打扰时段和健壮的TTS集成。"
 )
 class Main(star.Star):
     """
@@ -137,7 +137,7 @@ class Main(star.Star):
     async def _schedule_next_chat(self, session_id: str):
         """安排下一次主动聊天的定时任务。"""
         min_interval = int(self.config.get("min_interval_minutes", 30)) * 60
-        max_interval = max(min_interval, int(self.config.get("max_interval_minutes", 90)) * 60)
+        max_interval = max(min_interval, int(self.config.get("max_interval_minutes", 900)) * 60)
         random_interval = random.randint(min_interval, max_interval)
         
         next_trigger_time = time.time() + random_interval
@@ -186,7 +186,7 @@ class Main(star.Star):
         logger.info(f"[ProactiveChat] ALARM: Date job triggered for '{session_id}'.")
         try:
             # 检查插件是否启用和是否处于免打扰时段
-            if not self.config.get("enable", False) or is_quiet_time(self.config.get("quiet_hours", "0-6"), self.timezone):
+            if not self.config.get("enable", False) or is_quiet_time(self.config.get("quiet_hours", "1-7"), self.timezone):
                 await self._schedule_next_chat(session_id); return
 
             # 读取当前的未回复次数
@@ -257,12 +257,28 @@ class Main(star.Star):
                 # --- 核心：使用正确的 API 和健壮的逻辑发送消息 ---
                 is_tts_sent = False
                 try:
-                    # 如果回复包含日语，则尝试进行 TTS
-                    if JAPANESE_CHARS_PATTERN.search(response_text):
-                        logger.info("[ProactiveChat] Japanese detected. Attempting manual TTS.")
+                    # --- 新增：根据配置决定是否尝试 TTS ---
+                    # 从配置中获取 TTS 过滤模式
+                    tts_mode = self.config.get("tts_filter_mode", "strict_japanese")
+                    
+                    # 决定是否应该尝试进行 TTS
+                    should_attempt_tts = False
+                    if tts_mode == "compatible":
+                        # 兼容模式：总是尝试
+                        should_attempt_tts = True
+                        logger.info("[ProactiveChat] TTS mode is 'compatible'. Attempting TTS for all languages.")
+                    elif tts_mode == "strict_japanese" and JAPANESE_CHARS_PATTERN.search(response_text):
+                        # 严格模式：仅当检测到日语时尝试
+                        should_attempt_tts = True
+                        logger.info("[ProactiveChat] TTS mode is 'strict_japanese' and Japanese detected. Attempting manual TTS.")
+                    
+                    if should_attempt_tts:
+                        # 获取 TTS provider
                         tts_provider_or_list = self.context.get_using_tts_provider(umo=session_id)
                         tts_provider = tts_provider_or_list[0] if isinstance(tts_provider_or_list, list) and tts_provider_or_list else tts_provider_or_list
+                        
                         if tts_provider:
+                            # 调用 TTS 服务
                             audio_path = await tts_provider.get_audio(response_text)
                             if audio_path:
                                 # 使用 MessageChain 封装语音组件
@@ -272,6 +288,7 @@ class Main(star.Star):
                                 is_tts_sent = True
                                 await asyncio.sleep(0.5) # 短暂等待，确保语音和文本消息的顺序
                 except Exception as e:
+                    # 捕获所有 TTS 相关的异常，记录日志，但不会让程序崩溃
                     logger.error(f"[ProactiveChat] Manual TTS process raised an exception: {e}\n{traceback.format_exc()}")
                 finally:
                     # 无论 TTS 是否成功，都根据配置决定是否发送原文
