@@ -56,7 +56,8 @@
 
 <div align="center">
 
-# Proactive Chat Plugin for AstrBot (为AstrBot开发的主动消息插件)
+# 为AstrBot开发的主动消息插件
+# Proactive Chat Plugin for AstrBot
 
 **让你的 Bot 拥有主动关怀的灵魂**
 
