@@ -1,0 +1,3 @@
+# 本插件的核心依赖 APScheduler 通常已包含在 AstrBot 的默认环境中。
+# 此文件主要用于明确声明依赖，以备不时之需。
+apscheduler
