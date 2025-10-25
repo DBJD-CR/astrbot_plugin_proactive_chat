@@ -64,9 +64,7 @@
 </div>
 
 <p align="center">
-  <a href="https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/License-AGPL_3.0-blue.svg" alt="License: AGPL-3.0">
-  </a>
+  <img src="https://img.shields.io/badge/License-AGPL_3.0-blue.svg" alt="License: AGPL-3.0">
   <img src="https://img.shields.io/badge/Python-3.11+-blue.svg" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/AstrBot-v4.3.3+-orange.svg" alt="AstrBot v4.3.3+">
 </p>
