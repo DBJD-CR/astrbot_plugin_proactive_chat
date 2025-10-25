@@ -1,4 +1,4 @@
-name: "proactive_chat"
+name: "astrbot_plugin_proactive_chat"
 author: "DBJD-CR & Gemini-2.5-Pro"
 version: "0.9.6"
 desc: "一个让Bot能够发起主动消息的插件，拥有上下文感知、持久化会话、动态情绪、免打扰时段和健壮的TTS集成。"
