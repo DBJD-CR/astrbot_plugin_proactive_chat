@@ -8,7 +8,7 @@
         "description": "目标用户 QQ 号",
         "type": "string",
         "default": "",
-        "hint": "插件将只对这个用户 ID 发起主动私聊。请务必填写。"
+        "hint": "插件将只对这个用户 ID 发起主动消息。请务必填写。"
     },
     "proactive_prompt": {
         "description": "主动消息动机 (内心独白)",
@@ -31,6 +31,12 @@
         "type": "string",
         "default": "1-7",
         "hint": "格式 '开始-结束'，例如 '23-7'。"
+    },
+    "tts_filter_mode": {
+        "description": "TTS 语言过滤模式",
+        "type": "string",
+        "default": "strict_japanese",
+        "hint": "请输入 'compatible' 或 'strict_japanese'。'compatible': 尝试所有语言；'strict_japanese': 仅日语。"
     },
     "always_send_text": {
         "description": "发送语音后是否附带原文",
