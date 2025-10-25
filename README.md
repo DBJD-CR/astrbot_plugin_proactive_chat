@@ -71,11 +71,8 @@
   <img src="https://img.shields.io/badge/AstrBot-v4.3.3+-orange.svg" alt="AstrBot v4.3.3+">
 </p>
 
-<p align="center">
-  <a href="https://github.com/DBJD-CR/astrbot_plugin_proactive_chat">
-    <img src="https://count.getloli.com/get/@DBJD-CR.astrbot_plugin_proactive_chat?theme=moebooru" alt="Moe Counter">
-  </a>
-</p>
+
+[![Moe Counter](https://count.getloli.com/get/@DBJD-CR?theme=moebooru)](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat)
 
 ---
 
@@ -189,7 +186,7 @@
 - **QQ 群**: 1033089808
 - **群二维码**: 
   
-  <img width="250" alt="QQ Group QR Code" src="(https://github.com/user-attachments/assets/53acb3c8-1196-4b9e-b0b3-ad3a62d5c41d)" />
+  <img width="250" alt="QQ Group QR Code" src="https://github.com/user-attachments/assets/53acb3c8-1196-4b9e-b0b3-ad3a62d5c41d" />
 
 ## 🤝 贡献
 
@@ -200,7 +197,5 @@
 本插件遵循 [AGPL-3.0 License](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/blob/main/LICENSE)。
 
 ## ⭐️ 星星
-
-
 [![Star History Chart](https://api.star-history.com/svg?repos=DBJD-CR/astrbot_plugin_proactive_chat&type=Date)](https://www.star-history.com/#DBJD-CR/astrbot_plugin_proactive_chat&Date)
 
