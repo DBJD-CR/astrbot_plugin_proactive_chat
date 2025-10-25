@@ -1,5 +1,5 @@
-# 文件名: main.py (位于 data/plugins/proactive_chat/ 目录下)
-# 版本: 0.9.5 (终局注释版)
+# 文件名: main.py (位于 data/plugins/astrbot_plugin_proactive_chat/ 目录下)
+# 版本: 0.9.5 (稳定版本，详细注释)
 
 # 导入标准库
 import random
@@ -299,3 +299,4 @@ class Main(star.Star):
             self.scheduler.shutdown()
         save_session_data_to_file(self.session_data)
         logger.info("Proactive Chat plugin terminated.")
+
