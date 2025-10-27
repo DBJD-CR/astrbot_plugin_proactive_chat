@@ -24,8 +24,8 @@ from astrbot.core.message.components import Record, Plain
 
 # --- 全局常量定义 ---
 
-# 修复：使用与插件名一致的、唯一的持久化文件名，以避免与其他插件产生潜在的命名冲突。
-# 这是高质量开源插件开发的最佳实践。
+# 修复：使用与插件名一致的、唯一的持久化文件名，以避免与其他插件产生潜在的命名冲突
+# 这是高质量开源插件开发的最佳实践
 SESSION_DATA_FILE = os.path.join(get_astrbot_data_path(), "astrbot_plugin_proactive_chat_data.json")
 
 # --- 工具函数 ---
