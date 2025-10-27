@@ -1,5 +1,5 @@
 # 文件名: main.py (位于 data/plugins/astrbot_plugin_proactive_chat/ 目录下)
-# 版本: 0.9.6 多语言 TTS 预发布版 (Pre-release)
+# 版本: 0.9.7 (稳定版)
 
 # 导入标准库
 import random
@@ -7,10 +7,9 @@ import time
 import traceback
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import zoneinfo
 import asyncio
-import re
 
 # 导入第三方库
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -25,10 +24,9 @@ from astrbot.core.message.components import Record, Plain
 
 # --- 全局常量定义 ---
 
-# 持久化数据文件的路径，用于保存每个会话的定时任务信息
-SESSION_DATA_FILE = os.path.join(get_astrbot_data_path(), "proactive_chat_data.json")
-# 用于检测 LLM 回复是否包含日语字符的正则表达式
-JAPANESE_CHARS_PATTERN = re.compile(r'[\u3040-\u30ff\u30a0-\u30ff]')
+# 修复：使用与插件名一致的、唯一的持久化文件名，以避免与其他插件产生潜在的命名冲突。
+# 这是高质量开源插件开发的最佳实践。
+SESSION_DATA_FILE = os.path.join(get_astrbot_data_path(), "astrbot_plugin_proactive_chat_data.json")
 
 # --- 工具函数 ---
 
@@ -50,7 +48,7 @@ def save_session_data_to_file(data: dict):
         with open(SESSION_DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
     except Exception as e:
-        logger.error(f"[ProactiveChat] Failed to save session data: {e}")
+        logger.error(f"[主动消息] 保存会话数据失败: {e}")
 
 def is_quiet_time(quiet_hours_str: str, tz: zoneinfo.ZoneInfo) -> bool:
     """检查当前时间是否处于免打扰时段。"""
@@ -70,10 +68,10 @@ def is_quiet_time(quiet_hours_str: str, tz: zoneinfo.ZoneInfo) -> bool:
 # --- 插件主类 ---
 
 @star.register(
-    name="proactive_chat",
+    name="astrbot_plugin_proactive_chat",
     author="DBJD-CR & Gemini-2.5-Pro",
-    version="0.9.6",
-    desc="一个让Bot能够发起主动消息的插件，拥有上下文感知、持久化会话、动态情绪、免打扰时段和健壮的TTS集成。"
+    version="0.9.7",
+    desc="一个让Bot能够发起主动消息的插件，拥有上下文感知、动态情绪、免打扰时段和健壮的TTS集成。"
 )
 class Main(star.Star):
     """
@@ -90,7 +88,7 @@ class Main(star.Star):
         self.scheduler = None # 定时任务调度器实例
         self.timezone = None  # 时区信息
         self.session_data = load_session_data_from_file() # 从文件加载持久化的会话数据
-        logger.info("[ProactiveChat] Plugin instance created.")
+        logger.info("[主动消息] 插件实例已创建。")
 
     async def initialize(self):
         """
@@ -110,11 +108,13 @@ class Main(star.Star):
         
         # 从持久化数据中恢复因重启而中断的定时任务
         await self._init_jobs_from_data()
-        logger.info("[ProactiveChat] Scheduler initialized.")
+        logger.info("[主动消息] 调度器已初始化。")
 
     async def _init_jobs_from_data(self):
         """从文件中恢复定时任务。"""
-        target_user_id = str(self.config.get("target_user_id", "")).strip()
+        # 修复：从新的 "basic_settings" 分组中读取核心配置
+        basic_conf = self.config.get("basic_settings", {})
+        target_user_id = str(basic_conf.get("target_user_id", "")).strip()
         if not target_user_id: return
         
         for session_id, session_info in self.session_data.items():
@@ -136,8 +136,10 @@ class Main(star.Star):
 
     async def _schedule_next_chat(self, session_id: str):
         """安排下一次主动聊天的定时任务。"""
-        min_interval = int(self.config.get("min_interval_minutes", 30)) * 60
-        max_interval = max(min_interval, int(self.config.get("max_interval_minutes", 900)) * 60)
+        # 修复：从分组后的配置中正确读取参数
+        schedule_conf = self.config.get("schedule_settings", {})
+        min_interval = int(schedule_conf.get("min_interval_minutes", 30)) * 60
+        max_interval = max(min_interval, int(schedule_conf.get("max_interval_minutes", 900)) * 60)
         random_interval = random.randint(min_interval, max_interval)
         
         next_trigger_time = time.time() + random_interval
@@ -157,7 +159,8 @@ class Main(star.Star):
         # 更新持久化数据
         self.session_data.setdefault(session_id, {})["next_trigger_time"] = next_trigger_time
         save_session_data_to_file(self.session_data)
-        logger.info(f"[ProactiveChat] Scheduled next chat for {session_id} in {round(random_interval)} seconds.")
+        # 修复：优化日志输出，使其更直观
+        logger.info(f"[主动消息] 已为会话 {session_id} 安排下一次主动聊天，时间：{run_date.strftime('%Y-%m-%d %H:%M:%S')}。")
 
     @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE, priority=999)
     async def on_private_message(self, event: AstrMessageEvent):
@@ -165,9 +168,11 @@ class Main(star.Star):
         监听所有私聊消息。
         这是我们重置计时器和计数器的入口。
         """
-        if not self.config.get("enable", False): return
+        # 修复：从新的 "basic_settings" 分组中读取核心配置
+        basic_conf = self.config.get("basic_settings", {})
+        if not basic_conf.get("enable", False): return
         
-        target_user_id = str(self.config.get("target_user_id", "")).strip()
+        target_user_id = str(basic_conf.get("target_user_id", "")).strip()
         if not target_user_id or event.get_sender_id() != target_user_id:
             return
 
@@ -176,27 +181,33 @@ class Main(star.Star):
         self.session_data.setdefault(session_id, {})["unanswered_count"] = 0
         self.session_data[session_id]["last_msg_time"] = time.time()
         await self._schedule_next_chat(session_id)
-        logger.info(f"[ProactiveChat] User replied. Unanswered count for {session_id} has been reset.")
+        logger.info(f"[主动消息] 用户已回复。会话 {session_id} 的未回复计数已重置。")
 
     async def check_and_chat(self, session_id: str):
         """
         由定时任务触发的核心函数。
         负责检查条件、调用 LLM 并发送消息。
         """
-        logger.info(f"[ProactiveChat] ALARM: Date job triggered for '{session_id}'.")
+        logger.info(f"[主动消息] 定时任务触发，会话ID: '{session_id}'。")
         try:
+            # 修复：从新的 "basic_settings" 分组中读取核心配置
+            basic_conf = self.config.get("basic_settings", {})
+            schedule_conf = self.config.get("schedule_settings", {})
+            
             # 检查插件是否启用和是否处于免打扰时段
-            if not self.config.get("enable", False) or is_quiet_time(self.config.get("quiet_hours", "1-7"), self.timezone):
+            if not basic_conf.get("enable", False) or is_quiet_time(schedule_conf.get("quiet_hours", "1-7"), self.timezone):
+                logger.info("[主动消息] 插件被禁用或当前为免打扰时段，跳过本次任务并重新调度。")
                 await self._schedule_next_chat(session_id); return
 
             # 读取当前的未回复次数
             session_info = self.session_data.get(session_id, {})
             unanswered_count = session_info.get("unanswered_count", 0)
+            logger.info(f"[主动消息] 开始生成 Prompt，当前未回复次数: {unanswered_count}。")
             
             # 获取当前会话使用的 LLM Provider
             provider = self.context.get_using_provider(umo=session_id)
             if not provider:
-                logger.warning(f"[ProactiveChat] No LLM provider found for session {session_id}. Rescheduling.")
+                logger.warning(f"[主动消息] 未找到适用于会话 {session_id} 的 LLM Provider，重新调度。")
                 await self._schedule_next_chat(session_id); return
 
             # --- 核心：加载人格和历史 ---
@@ -216,32 +227,33 @@ class Main(star.Star):
                             persona = await self.context.persona_manager.get_persona(conversation.persona_id)
                             if persona:
                                 original_system_prompt = persona.system_prompt
-                                logger.info(f"[ProactiveChat] Loaded session persona '{persona.persona_id}'.")
+                                logger.info(f"[主动消息] 已加载会话专属人格 '{persona.persona_id}'。")
                 
                 # 2. 如果找不到专属人格，则加载全局默认人格作为 fallback
                 if not original_system_prompt:
                      default_persona_v3 = await self.context.persona_manager.get_default_persona_v3(umo=session_id)
                      if default_persona_v3:
                         original_system_prompt = default_persona_v3['prompt']
-                        logger.info(f"[ProactiveChat] Loaded default persona '{default_persona_v3['name']}'.")
+                        logger.info(f"[主动消息] 已加载全局默认人格 '{default_persona_v3['name']}'。")
             except Exception as e:
-                logger.warning(f"[ProactiveChat] Failed to get context: {e}")
+                logger.warning(f"[主动消息] 获取上下文失败: {e}")
             
             # 如果最终还是没能加载到任何人格，则放弃本次主动聊天
             if not original_system_prompt:
-                logger.error("[ProactiveChat] CRITICAL: Could not load any persona. Aborting."); return
+                logger.error("[主动消息] 关键错误：无法加载任何人格设定，放弃本次主动聊天。"); return
 
             if str_history:
                 pure_history_messages = str_history
-                logger.info(f"[ProactiveChat] Assembled {len(pure_history_messages)} pure history messages.")
+                logger.info(f"[主动消息] 已载入 {len(pure_history_messages)} 条纯文本历史消息。")
 
             # --- 核心：构造最终的 Prompt ---
             
-            # 从配置中读取用户定义的“动机”模板
-            motivation_template = self.config.get("proactive_prompt", "")
+            # 终局修复：从新的 "prompt_settings" 分组中读取核心配置
+            prompt_conf = self.config.get("prompt_settings", {})
+            motivation_template = prompt_conf.get("proactive_prompt", "")
             # 将动态的计数值注入模板
             final_user_simulation_prompt = motivation_template.replace("{{unanswered_count}}", str(unanswered_count))
-            logger.info(f"[ProactiveChat] Generated immersive prompt for LLM.")
+            logger.info(f"[主动消息] 已生成包含动机的 Prompt。")
 
             # --- 核心：以正确的“三分离”架构调用 LLM ---
             llm_response_obj = await provider.text_chat(
@@ -252,60 +264,50 @@ class Main(star.Star):
             
             if llm_response_obj and llm_response_obj.completion_text:
                 response_text = llm_response_obj.completion_text.strip()
-                logger.info(f"[ProactiveChat] LLM generated text: '{response_text}'.")
+                logger.info(f"[主动消息] LLM 已生成文本: '{response_text}'。")
                 
                 # --- 核心：使用正确的 API 和健壮的逻辑发送消息 ---
                 is_tts_sent = False
                 try:
-                    # --- 新增：根据配置决定是否尝试 TTS ---
-                    # 从配置中获取 TTS 过滤模式
-                    tts_mode = self.config.get("tts_filter_mode", "strict_japanese")
+                    # 修复：移除所有语言过滤逻辑，永远勇敢地尝试TTS
+                    logger.info("[主动消息] 尝试为所有语言进行手动 TTS。")
                     
-                    # 决定是否应该尝试进行 TTS
-                    should_attempt_tts = False
-                    if tts_mode == "compatible":
-                        # 兼容模式：总是尝试
-                        should_attempt_tts = True
-                        logger.info("[ProactiveChat] TTS mode is 'compatible'. Attempting TTS for all languages.")
-                    elif tts_mode == "strict_japanese" and JAPANESE_CHARS_PATTERN.search(response_text):
-                        # 严格模式：仅当检测到日语时尝试
-                        should_attempt_tts = True
-                        logger.info("[ProactiveChat] TTS mode is 'strict_japanese' and Japanese detected. Attempting manual TTS.")
+                    # 获取 TTS provider
+                    tts_provider_or_list = self.context.get_using_tts_provider(umo=session_id)
+                    tts_provider = tts_provider_or_list[0] if isinstance(tts_provider_or_list, list) and tts_provider_or_list else tts_provider_or_list
                     
-                    if should_attempt_tts:
-                        # 获取 TTS provider
-                        tts_provider_or_list = self.context.get_using_tts_provider(umo=session_id)
-                        tts_provider = tts_provider_or_list[0] if isinstance(tts_provider_or_list, list) and tts_provider_or_list else tts_provider_or_list
-                        
-                        if tts_provider:
-                            # 调用 TTS 服务
-                            audio_path = await tts_provider.get_audio(response_text)
-                            if audio_path:
-                                # 使用 MessageChain 封装语音组件
-                                voice_chain = MessageChain([Record(file=audio_path)])
-                                # 使用官方指定的 send_message API 发送
-                                await self.context.send_message(session_id, voice_chain)
-                                is_tts_sent = True
-                                await asyncio.sleep(0.5) # 短暂等待，确保语音和文本消息的顺序
+                    if tts_provider:
+                        # 调用 TTS 服务
+                        audio_path = await tts_provider.get_audio(response_text)
+                        if audio_path:
+                            # 使用 MessageChain 封装语音组件
+                            voice_chain = MessageChain([Record(file=audio_path)])
+                            # 使用官方指定的 send_message API 发送
+                            await self.context.send_message(session_id, voice_chain)
+                            is_tts_sent = True
+                            await asyncio.sleep(0.5) # 短暂等待，确保语音和文本消息的顺序
                 except Exception as e:
                     # 捕获所有 TTS 相关的异常，记录日志，但不会让程序崩溃
-                    logger.error(f"[ProactiveChat] Manual TTS process raised an exception: {e}\n{traceback.format_exc()}")
+                    logger.error(f"[主动消息] 手动 TTS 流程发生异常: {e}\n{traceback.format_exc()}")
                 finally:
+                    # 修复：从分组后的配置中正确读取参数
+                    tts_conf = self.config.get("tts_settings", {})
                     # 无论 TTS 是否成功，都根据配置决定是否发送原文
-                    if not is_tts_sent or self.config.get("always_send_text", True):
+                    if not is_tts_sent or tts_conf.get("always_send_text", True):
                         text_chain = MessageChain([Plain(text=response_text)])
                         await self.context.send_message(session_id, text_chain)
-                    logger.info(f"[ProactiveChat] SUCCESS! All messages sent to '{session_id}'.")
+                    logger.info(f"[主动消息] 成功！所有消息已发送至 '{session_id}'。")
                 
                 # --- 核心：修正计数器逻辑 ---
                 # 成功发送后，将计数值+1
                 self.session_data.setdefault(session_id, {})["unanswered_count"] = unanswered_count + 1
+                logger.info(f"[主动消息] 任务成功，未回复次数更新为: {unanswered_count + 1}。")
                 await self._schedule_next_chat(session_id)
             else:
-                logger.warning("[ProactiveChat] LLM call failed. Rescheduling without incrementing count.")
+                logger.warning("[主动消息] LLM 调用失败或返回空内容，重新调度。")
                 await self._schedule_next_chat(session_id)
         except Exception as e:
-            logger.error(f"[ProactiveChat] FATAL ERROR in check_and_chat job: {e}\n{traceback.format_exc()}")
+            logger.error(f"[主动消息] check_and_chat 任务发生致命错误: {e}\n{traceback.format_exc()}")
             await self._schedule_next_chat(session_id)
 
     async def terminate(self):
@@ -315,5 +317,5 @@ class Main(star.Star):
         if self.scheduler and self.scheduler.running:
             self.scheduler.shutdown()
         save_session_data_to_file(self.session_data)
-        logger.info("Proactive Chat plugin terminated.")
+        logger.info("主动消息插件已终止。")
 
