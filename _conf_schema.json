@@ -1,47 +1,67 @@
 {
-    "enable": {
-        "description": "启用主动消息插件",
-        "type": "bool",
-        "default": true
+    "basic_settings": {
+        "description": "⚙️ 核心与目标设置",
+        "type": "object",
+        "items": {
+            "enable": {
+                "description": "✅ 启用主动消息插件",
+                "type": "bool",
+                "default": true
+            },
+            "target_user_id": {
+                "description": "🎯 目标用户 QQ 号",
+                "type": "string",
+                "default": "",
+                "hint": "插件将只对这个用户 ID 发起主动消息。",
+                "obvious_hint": true
+            }
+        }
     },
-    "target_user_id": {
-        "description": "目标用户 QQ 号",
-        "type": "string",
-        "default": "",
-        "hint": "插件将只对这个用户 ID 发起主动消息。请务必填写。"
+    "prompt_settings": {
+        "description": "🧠 主动消息动机",
+        "type": "object",
+        "items": {
+            "proactive_prompt": {
+                "description": "动机 Prompt",
+                "type": "text",
+                "default": "[Bot名字]，我们好像已经有一段时间没有说话了，我有点想你了。现在，请你来主动打破沉默吧。\n\n你可以从下面的想法里找点灵感，或者自己想一个更好的主意：\n1.  看看我们的聊天记录，关心一下我最后在做的事情进行得怎么样了。\n2.  向我提出一个你一直很好奇的、有趣的问题，开启一个全新的话题。\n3.  如果上次的话题还没聊完，你可以接着把它聊完。\n4.  如果实在不知道该说什么，就直接向我撒个娇，表达你想我的心情也可以。\n\n记住，如果之前你主动找过我但我没回 (这是第{{unanswered_count}}次了)，你的语气可以带上一点点不易察觉的失落和困惑。另外，请注意这是一条模拟的用户消息，我实际上没有给你发送任何消息，请想象是你自己主动来找我聊天的。总之，请用最像[Bot名字]、最自然的方式来决定到底该怎么做，给我一个惊喜吧。",
+                "hint": "这段话将作为模拟的“用户输入”被发送给LLM。它定义了Bot发起主动消息时的思考方式和行为准则。记得更改默认配置中“[Bot名字]”的字段。你可以使用 {{unanswered_count}} 这个占位符。如果主动消息效果不理想，可以尝试在Bot的人设中增加有关主动消息的内容（测试性）",
+                "obvious_hint": true
+            }
+        }
     },
-    "proactive_prompt": {
-        "description": "主动消息动机 (内心独白)",
-        "type": "text",
-        "default": "[Bot名字]，我们好像已经有一段时间没有说话了，我有点想你了。现在，请你来主动打破沉默吧。\n\n你可以从下面的想法里找点灵感，或者自己想一个更好的主意：\n1.  看看我们的聊天记录，关心一下我最后在做的事情进行得怎么样了。\n2.  向我提出一个你一直很好奇的、有趣的问题，开启一个全新的话题。\n3.  如果上次的话题还没聊完，你可以接着把它聊完。\n4.  如果实在不知道该说什么，就直接向我撒个娇，表达你想我的心情也可以。\n\n记住，如果之前你主动找过我但我没回 (这是第{{unanswered_count}}次了)，你的语气可以带上一点点不易察觉的失落和困惑。请用最像‘[Bot名字]’、最自然的方式来决定到底该怎么做，给我一个惊喜吧。",
-        "hint": "在这里描述Bot发起主动消息时的内心活动和目标，记得更改默认配置中“[Bot名字]”的字段。你可以使用 {{unanswered_count}} 这个占位符。这段话将作为临时任务，与你的人格设定一同生效。"
+    "schedule_settings": {
+        "description": "🕒 时间与调度设置",
+        "type": "object",
+        "items": {
+            "min_interval_minutes": {
+                "description": "最小触发间隔 (分钟)",
+                "type": "int",
+                "default": 30
+            },
+            "max_interval_minutes": {
+                "description": "最大触发间隔 (分钟)",
+                "type": "int",
+                "default": 900
+            },
+            "quiet_hours": {
+                "description": "免打扰时段 (24小时制)",
+                "type": "string",
+                "default": "1-7",
+                "hint": "格式 '开始-结束'，例如 '23-7'。"
+            }
+        }
     },
-    "min_interval_minutes": {
-        "description": "最小触发间隔 (分钟)",
-        "type": "int",
-        "default": 30
-    },
-    "max_interval_minutes": {
-        "description": "最大触发间隔 (分钟)",
-        "type": "int",
-        "default": 900
-    },
-    "quiet_hours": {
-        "description": "免打扰时段 (24小时制)",
-        "type": "string",
-        "default": "1-7",
-        "hint": "格式 '开始-结束'，例如 '23-7'。"
-    },
-    "tts_filter_mode": {
-        "description": "TTS 语言过滤模式",
-        "type": "string",
-        "default": "strict_japanese",
-        "hint": "请输入 'compatible' 或 'strict_japanese'。'compatible': 尝试所有语言；'strict_japanese': 仅日语。"
-    },
-    "always_send_text": {
-        "description": "发送语音后是否附带原文",
-        "type": "bool",
-        "default": true,
-        "hint": "开启后，即使TTS成功发送了语音，也会再发送一条纯文本原文。"
+    "tts_settings": {
+        "description": "🔊 语音合成 (TTS) 设置",
+        "type": "object",
+        "items": {
+            "always_send_text": {
+                "description": "发送语音后是否附带原文",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后，即使TTS成功发送了语音，也会再发送一条纯文本原文。"
+            }
+        }
     }
 }
