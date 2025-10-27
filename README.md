@@ -24,7 +24,7 @@
 
 ## ✨ 效果示例：
 
-  <img width="400" alt="效果图" src="https://github.com/user-attachments/assets/0996618b-dda8-4788-bf86-eb7f352cb761" />
+  <img width="750" height="600" alt="效果图" src="https://github.com/user-attachments/assets/0996618b-dda8-4788-bf86-eb7f352cb761" />
 
 <!-- Gemini 预留给开发者的话 -->
 > **开发者的话：**
