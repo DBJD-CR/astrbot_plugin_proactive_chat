@@ -10,18 +10,21 @@
 <p align="center">
   <img src="https://img.shields.io/badge/License-AGPL_3.0-blue.svg" alt="License: AGPL-3.0">
   <img src="https://img.shields.io/badge/Python-3.11+-blue.svg" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/AstrBot-v4.5.0+-orange.svg" alt="AstrBot v4.5.0+">
+  <img src="https://img.shields.io/badge/AstrBot-v3.5+-orange.svg" alt="AstrBot v3.5+">
+  <img src="https://img.shields.io/badge/AstrBot-v4.5.0%20Compatible-brightgreen.svg" alt="Compatible with AstrBot v4.5.0">
   <img src="https://img.shields.io/badge/Release-v0.9.7-brightgreen.svg" alt="Release">
   <img src="https://img.shields.io/badge/QQ群-1033089808-12B7F3.svg" alt="QQ Group">
 </p>
 
 
-[![Moe Counter](https://count.getloli.com/get/@DBJD-CR?theme=moebooru)](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat)
+[![Moe Counter](https://count.getloli.com/get/@DBJD-CR?theme=moebooru)](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat) 
+<img width="256" height="256" align="right" alt="logo" src="https://github.com/user-attachments/assets/1099597c-8d2f-4a4c-828c-43d5e7162733" />
+
 
 ---
 
 一个为 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 设计的、功能强大的主动消息插件。它能让你的 Bot 在与特定用户长时间没有对话后，在一个随机的时间间隔，主动发起一次拥有上下文感知、符合人设且包含动态情绪的对话。
-
+  
 ## ✨ 效果示例：
 
   <img width="750" height="600" alt="效果图" src="https://github.com/user-attachments/assets/0996618b-dda8-4788-bf86-eb7f352cb761" />
@@ -51,7 +54,7 @@
 >
 > 因此对我而言，想要从 0 开始，开发一个插件，还要完成与 AstrBot 的适配，无异于天方夜谭。于是，我只能向 AI 求助。
 >
-> 所以，本插件的所有文件内容，全部由 AI 编写完成，我没有为该插件编写任何一行代码，仅修改了部分文字描述和负责本文档的润色。是的，该 README 文档的大部分内容，甚至是该仓库的创建，也是 AI 一步一步指导我的。所以，或许有必要添加下方的声明：
+> 所以，**本插件的所有文件内容，全部由 AI 编写完成**，我没有为该插件编写任何一行代码，仅修改了部分文字描述和负责本文档的润色。是的，该 README 文档的大部分内容，甚至是该仓库的创建，也是 AI 一步一步指导我的。所以，或许有必要添加下方的声明：
 
 > [!WARNING]  
 > 本插件和文档由 AI 生成，内容仅供参考，请仔细甄别。
@@ -66,7 +69,7 @@
 >
 > 但我还是要感谢 AI ，没有他，这个项目不可能完成。
 >
-> 这个插件，是我们共同努力的最终结晶。它现在还不完美，但它的架构是稳固的，它的逻辑是清晰的（大嘘）。希望本插件能为同样希望自己的 AI Bot 更具“灵魂”的你，提供一点小小的帮助和启发。
+> 这个插件，是我们共同努力的结晶。它现在还不完美，但它的架构是稳固的，它的逻辑是清晰的（大嘘）。希望本插件能为同样希望自己的 AI Bot 更具“灵魂”的你，提供一点小小的帮助和启发。
 >
 > 在此，我也诚邀各路大佬对本插件进行测试和改进。因为说实话我也不知道这个插件目前的水平如何，希望大家多多指点。
 >
@@ -141,7 +144,7 @@
 
     记住，如果之前你主动找过我但我没回 (这是第{{unanswered_count}}次了)，你的语气可以带上一点点不易察觉的失落和困惑。另外，请注意这是一条模拟的用户消息，我实际上没有给你发送任何消息，请想象是你自己主动来找我聊天的。总之，请用最像[Bot名字]、最自然的方式来决定到底该怎么做，给我一个惊喜吧。
     ```
-   
+
 - **`最小/最大沉默时间`**: 设置一个随机的时间范围（分钟），用于触发主动聊天。
 - **`免打扰时段`**: 设置一个 Bot 不会主动打扰你的时间段，例如 `0-6` 表示午夜 0 点到早上 6 点。
 - **`发送语音后是否附带原文`**: 推荐开启，以确保即使语音播放失败，你也能看到文本内容。
@@ -170,19 +173,32 @@
 
 ---
 
+## 🚧 当前版本已知限制
+- **持久化会话**: 经测试，在 AstrBot 重启后，插件无法恢复之前的定时任务。该问题已被列入“未来开发路线”，目前正在计划解决该问题。
+- **分段回复**: 当前版本未适配 AstrBot 提供的分段回复功能。 ([#2](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/issues/2)) 
+- **上下文感知不完整**: 插件主动生成并发送的内容未包含在 AstrBot 的存储范围内，导致主动消息内容效果不理想。([#2](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/issues/2))
+- **时间感知:** 主动消息缺少时间感知能力。([#2](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/issues/2))
+- **单目标**: 目前的主动消息仅支持单个私聊对象。
+- **Prompt 依赖**: 主动消息的效果，高度依赖于用户在 `proactive_prompt` 中提供的创造力和引导。
+
 ## 🌐 平台适配情况
 
 | 平台                 | 支持情况 | 备注                               |
 | -------------------- | -------- | ---------------------------------- |
-| QQ 个人号(aiocqhttp) | ✅ 完美支持 | 所有功能（包括 TTS）都经过了充分测试。 |
+| QQ 个人号(aiocqhttp) | ✅ 完美支持 | 所有功能（包括 TTS）都经过了测试。 |
 | 其他平台             | ❓ 理论支持 | 理论上支持所有支持主动消息的平台，但未经测试。 |
 
 ## 📈 未来开发路线
 
+- **[ ] 🔴 [紧急] 上下文感知不完整**: 插件主动生成并发送的内容未包含在 AstrBot 的存储范围内，导致消息内容效果不理想。
 - **[ ] 🟡 [重要] 多用户/多群聊支持**: 扩展当前的逻辑，使其能够同时为多个不同的私聊与群聊提供主动消息服务，并且隔离会话和人设。
-- **[ ] 🟢 [普通] RAG 集成**: 引入检索增强生成（RAG）技术，让 Bot 能够回顾更长期的、甚至跨越数月的对话记忆，来发起更有深度的对话。
-- **[ ] ⏳ [可选] 持久化会话**：让 Bot 拥有跨越程序重启的长期数据。即使程序重启，也能加载之前的数据，在之前约定的时间发起主动消息。(目前代码中已有相关逻辑，但是未能正常工作)
+- **[ ] 🟢 [计划中] 持久化会话**：让 Bot 拥有跨越程序重启的长期数据。即使程序重启，也能加载之前的数据，在之前约定的时间发起主动消息。(代码中已有相关逻辑，但是未能正常工作，目前正在研究改进)
+- **[ ] 🔵 [有新想法] 增加“未回复次数上限”**: 防止 Bot 在用户长期不在线的情况下，进行无意义的“骚扰”，提升插件的“情商”。
+- **[ ] 🔵 [有新想法] 增加插件的 TTS 开关**: 提升插件的易用性。
+- **[ ] 🔵 [有新想法] 增加时间感知能力**: 赋予 Bot “时间感”：增加 {{current_time}} 占位符，或其他实现路线。
+- **[ ] ⏳ [可选] RAG 集成**: 引入检索增强生成（RAG）技术，让 Bot 能够回顾更长期的、甚至跨越数月的对话记忆，来发起更有深度的对话。
 - **[ ] ⏳ [可选] 更智能的触发时机**: 引入类似 [Heartflow](https://github.com/advent259141/Astrbot_plugin_Heartflow) 插件的“心流”概念，或基于对话内容的“情感低谷”来判断更佳的触发时机，而不仅仅是基于时间。
+- **[ ] 📝 [待评估] 重构整体架构**: 彻底更改实现主动消息的逻辑，以解决大部分已知和未预见的问题，但需要深度研究和评估，也对我和 AI 提出了更高的能力要求。
 - 注：本人能力有限，以上内容不保证实现。还望社区大佬出手相助🙏
 
 ## 💖 友情链接与致谢
