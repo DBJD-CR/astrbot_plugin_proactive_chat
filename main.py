@@ -23,7 +23,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import astrbot.api.star as star
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
-
 # 导入官方定义的消息对象
 from astrbot.core.agent.message import (
     AssistantMessageSegment,
@@ -62,15 +61,17 @@ class ProactiveChatPlugin(star.Star):
         super().__init__(context)
 
         self.config: AstrBotConfig = config
-        self.scheduler = None
-        self.timezone = None
+        self.scheduler: AsyncIOScheduler | None = None
+        self.timezone: zoneinfo.ZoneInfo | None = None
 
         # 使用 StarTools 获取插件专属数据目录，确保数据隔离
         self.data_dir = star.StarTools.get_data_dir("astrbot_plugin_proactive_chat")
         self.session_data_file = self.data_dir / "session_data.json"
+        self.discovered_sessions_file = self.data_dir / "discovered_sessions.json"
 
-        self.data_lock = None
-        self.session_data = {}
+        self.data_lock: asyncio.Lock | None = None
+        self.session_data: dict[str, dict] = {}
+        self.discovered_sessions: dict[str, dict] = {}
 
         # 用于群聊消息流监听的定时器字典
         # 键为会话ID，值为asyncio.TimerHandle对象，用于管理每个群聊的沉默倒计时
@@ -143,7 +144,417 @@ class ProactiveChatPlugin(star.Star):
 
         return None
 
-    def _get_session_log_str(self, session_id: str, session_config: dict = None) -> str:
+    def _is_private_message_type(self, message_type: str) -> bool:
+        return "Friend" in message_type or "Private" in message_type
+
+    def _is_group_message_type(self, message_type: str) -> bool:
+        return "Group" in message_type
+
+    def _is_private_session(self, session_id: str) -> bool:
+        parsed = self._parse_session_id(session_id)
+        if not parsed:
+            lower = session_id.lower()
+            return "friendmessage" in lower or "private" in lower
+        return self._is_private_message_type(parsed[1])
+
+    def _is_group_session(self, session_id: str) -> bool:
+        parsed = self._parse_session_id(session_id)
+        if not parsed:
+            return "group" in session_id.lower()
+        return self._is_group_message_type(parsed[1])
+
+    def _split_configured_session_target(
+        self, configured_value: str, default_message_type: str
+    ) -> tuple[str | None, str, str] | None:
+        if not configured_value:
+            return None
+
+        configured_value = str(configured_value).strip()
+        parsed = self._parse_session_id(configured_value)
+        if parsed:
+            platform, parsed_type, target_id = parsed
+            return platform, parsed_type, target_id
+
+        return None, default_message_type, configured_value
+
+    def _is_configured_session_match(
+        self,
+        configured_value: str,
+        runtime_session_id: str,
+        runtime_target_id: str,
+        expected_session_type: str,
+    ) -> bool:
+        if not configured_value:
+            return False
+
+        configured = self._split_configured_session_target(
+            configured_value,
+            "FriendMessage" if expected_session_type == "private" else "GroupMessage",
+        )
+        runtime = self._parse_session_id(runtime_session_id)
+
+        if not configured:
+            return False
+
+        configured_platform, configured_type, configured_target = configured
+        if runtime:
+            runtime_platform, runtime_type, runtime_target = runtime
+            if expected_session_type == "private" and not self._is_private_message_type(
+                runtime_type
+            ):
+                return False
+            if expected_session_type == "group" and not self._is_group_message_type(
+                runtime_type
+            ):
+                return False
+
+            if configured_platform and configured_platform != runtime_platform:
+                return False
+
+            if expected_session_type == "private" and not self._is_private_message_type(
+                configured_type
+            ):
+                return False
+            if expected_session_type == "group" and not self._is_group_message_type(
+                configured_type
+            ):
+                return False
+
+            return runtime_target == configured_target or runtime_target.endswith(
+                f":{configured_target}"
+            )
+
+        return runtime_target_id == configured_target or runtime_target_id.endswith(
+            f":{configured_target}"
+        )
+
+    def _resolve_configured_session_id(
+        self, configured_value: str, default_message_type: str
+    ) -> str | None:
+        configured = self._split_configured_session_target(
+            configured_value, default_message_type
+        )
+        if not configured:
+            return None
+
+        preferred_platform, message_type, target_id = configured
+        if preferred_platform:
+            return self._resolve_full_umo(target_id, message_type, preferred_platform)
+        return self._resolve_full_umo(target_id, message_type)
+
+    def _get_session_processing_key(
+        self, configured_value: str, default_message_type: str
+    ) -> str:
+        resolved_session_id = self._resolve_configured_session_id(
+            configured_value, default_message_type
+        )
+        if resolved_session_id:
+            return resolved_session_id
+
+        return f"{default_message_type}:{configured_value}"
+
+    def _is_platform_allowed_for_discovery(
+        self, platform_id: str, session_type: str
+    ) -> bool:
+        settings = self.config.get(f"{session_type}_settings", {})
+        allowed_platform_ids = settings.get("allowed_platform_ids", []) or []
+        if not allowed_platform_ids:
+            return True
+        return platform_id in {str(item).strip() for item in allowed_platform_ids if item}
+
+    def _get_discovered_session_config(self, session_id: str) -> dict | None:
+        discovered_info = self.discovered_sessions.get(session_id)
+        if not isinstance(discovered_info, dict):
+            return None
+
+        session_type = discovered_info.get("session_type")
+        if session_type not in {"private", "group"}:
+            return None
+
+        settings = self.config.get(f"{session_type}_settings", {})
+        if not settings.get("enable", False):
+            return None
+        if not settings.get("allow_discovered_sessions", False):
+            return None
+
+        platform_id = discovered_info.get("platform_id", "")
+        if platform_id and not self._is_platform_allowed_for_discovery(
+            platform_id, session_type
+        ):
+            return None
+
+        config_copy = settings.copy()
+        config_copy["_session_type"] = session_type
+        config_copy["_from_discovery"] = True
+        config_copy["_session_name"] = discovered_info.get("target_name", "")
+        return config_copy
+
+    async def _record_discovered_session(self, event: AstrMessageEvent, session_id: str):
+        lock = self.data_lock
+        if lock is None:
+            return
+
+        parsed = self._parse_session_id(session_id)
+        if not parsed:
+            return
+
+        platform_id, message_type, target_id = parsed
+        if self._is_private_message_type(message_type):
+            session_type = "private"
+        elif self._is_group_message_type(message_type):
+            session_type = "group"
+        else:
+            return
+
+        if not self._is_platform_allowed_for_discovery(platform_id, session_type):
+            return
+
+        current_time = time.time()
+        discovered_info = {
+            "platform_id": platform_id,
+            "message_type": message_type,
+            "target_id": target_id,
+            "session_type": session_type,
+            "target_name": event.get_sender_name() or "",
+            "self_id": event.get_self_id() or "",
+            "last_seen_at": current_time,
+        }
+
+        should_save = False
+        async with lock:
+            existing = self.discovered_sessions.get(session_id)
+            if not isinstance(existing, dict):
+                self.discovered_sessions[session_id] = {
+                    **discovered_info,
+                    "discovered_at": current_time,
+                }
+                should_save = True
+            else:
+                existing.update({k: v for k, v in discovered_info.items() if v != ""})
+                if "discovered_at" not in existing:
+                    existing["discovered_at"] = current_time
+
+        if should_save:
+            async with lock:
+                await self._save_discovered_sessions_internal()
+            # 确保 Dashboard 会话管理列表中可见：若该 UMO 尚无对话记录，则创建一条
+            try:
+                conv_mgr = self.context.conversation_manager
+                existing_conv_id = await conv_mgr.get_curr_conversation_id(session_id)
+                if not existing_conv_id:
+                    await conv_mgr.new_conversation(session_id)
+                    logger.info(
+                        f"[主动消息] 已为新发现会话 {session_id} 创建对话记录，Dashboard 可见喵。"
+                    )
+            except Exception as e:
+                logger.debug(
+                    f"[主动消息] 为发现会话创建对话记录时出错（不影响功能）: {e}"
+                )
+
+        # 无论是否首次发现，都同步更新 schema options，确保配置页 session_list 下拉可选
+        self._refresh_schema_session_options()
+
+    def _refresh_schema_session_options(self) -> None:
+        """将已发现会话注入 config schema 的 session_list options，使配置页出现下拉选项。
+
+        self.config.schema 是 AstrBot 内存中的 dict，直接修改即可对前端立即生效，
+        无需修改磁盘文件或重启插件。
+        """
+        try:
+            schema = self.config.schema
+            if not isinstance(schema, dict):
+                return
+
+            private_ids = sorted(
+                sid for sid, info in self.discovered_sessions.items()
+                if isinstance(info, dict) and info.get("session_type") == "private"
+            )
+            group_ids = sorted(
+                sid for sid, info in self.discovered_sessions.items()
+                if isinstance(info, dict) and info.get("session_type") == "group"
+            )
+
+            for section_key, ids in (
+                ("private_settings", private_ids),
+                ("group_settings", group_ids),
+            ):
+                section = schema.get(section_key, {})
+                items = section.get("items", {})
+                sl = items.get("session_list")
+                if isinstance(sl, dict):
+                    sl["options"] = ids
+        except Exception as e:
+            logger.debug(f"[主动消息] 更新 schema options 失败（不影响功能）: {e}")
+
+    def _get_discovered_sessions_sorted(
+        self, session_type: str | None = None
+    ) -> list[tuple[str, dict]]:
+        entries: list[tuple[str, dict]] = []
+        for session_id, info in self.discovered_sessions.items():
+            if not isinstance(info, dict):
+                continue
+            if session_type and info.get("session_type") != session_type:
+                continue
+            entries.append((session_id, info))
+
+        entries.sort(
+            key=lambda item: item[1].get("last_seen_at", 0),
+            reverse=True,
+        )
+        return entries
+
+    def _is_session_in_global_list(self, session_id: str, session_type: str) -> bool:
+        settings = self.config.get(f"{session_type}_settings", {})
+        session_list = settings.get("session_list", []) or []
+        return session_id in {str(item).strip() for item in session_list if item}
+
+    def _get_discovered_session_summary(self, session_id: str, info: dict) -> str:
+        session_type = info.get("session_type", "unknown")
+        type_label = "私聊" if session_type == "private" else "群聊"
+        target_name = str(info.get("target_name", "")).strip()
+        target_id = str(info.get("target_id", "")).strip()
+        platform_id = str(info.get("platform_id", "")).strip()
+
+        name_part = target_name if target_name and target_name != "Unknown" else target_id
+        if not name_part:
+            name_part = session_id
+
+        platform_part = f"{platform_id} 平台" if platform_id else "未知平台"
+        return f"[{type_label}] {name_part} ({platform_part})"
+
+    def _resolve_discovered_session_selector(self, selector: str) -> tuple[str, dict] | None:
+        selector = selector.strip()
+        if not selector:
+            return None
+
+        if selector in self.discovered_sessions and isinstance(
+            self.discovered_sessions[selector], dict
+        ):
+            return selector, self.discovered_sessions[selector]
+
+        if selector.isdigit():
+            index = int(selector)
+            discovered_entries = self._get_discovered_sessions_sorted()
+            if 1 <= index <= len(discovered_entries):
+                return discovered_entries[index - 1]
+
+        return None
+
+
+    async def _add_discovered_session_to_config(self, session_id: str) -> str:
+        info = self.discovered_sessions.get(session_id)
+        if not isinstance(info, dict):
+            return f"未找到会话 `{session_id}` 喵。"
+
+        session_type = info.get("session_type")
+        if session_type not in {"private", "group"}:
+            return f"会话 `{session_id}` 的类型无效，无法导入喵。"
+
+        settings_key = f"{session_type}_settings"
+        settings = self.config.get(settings_key, {})
+        session_list = settings.get("session_list", []) or []
+        normalized_list = [str(item).strip() for item in session_list if item]
+
+        if session_id in normalized_list:
+            return f"{self._get_discovered_session_summary(session_id, info)} 已经在会话列表里喵。"
+
+        normalized_list.append(session_id)
+        settings["session_list"] = normalized_list
+        self.config[settings_key] = settings
+        self.config.save_config()
+
+        if settings.get("enable", False):
+            await self._setup_auto_trigger_for_session_config(
+                settings,
+                str(info.get("message_type", "FriendMessage")),
+                session_id,
+                str(info.get("target_name", "")),
+            )
+
+        logger.info(f"[主动消息] 已通过命令将会话导入配置喵: {session_id}")
+        return f"已将 {self._get_discovered_session_summary(session_id, info)} 导入到全局会话列表喵。"
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("proactive_sessions")
+    async def proactive_sessions(self, event: AstrMessageEvent) -> None:
+        """查看自动发现的会话列表"""
+        discovered_entries = self._get_discovered_sessions_sorted()
+        if not discovered_entries:
+            event.set_result(
+                MessageEventResult()
+                .message("当前还没有自动发现到任何会话喵。")
+                .use_t2i(False)
+            )
+            return
+
+        lines = ["已发现会话列表:\n"]
+        for index, (session_id, info) in enumerate(discovered_entries, start=1):
+            session_type = str(info.get("session_type", "unknown"))
+            imported = self._is_session_in_global_list(session_id, session_type)
+            last_seen_at = info.get("last_seen_at", 0)
+            if isinstance(last_seen_at, (int, float)) and last_seen_at > 0:
+                last_seen_text = datetime.fromtimestamp(last_seen_at).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+            else:
+                last_seen_text = "未知"
+
+            status_text = "已导入" if imported else "未导入"
+            lines.append(
+                f"{index}. {self._get_discovered_session_summary(session_id, info)}\n"
+                f"   会话ID: {session_id}\n"
+                f"   状态: {status_text} | 最后活跃: {last_seen_text}\n"
+            )
+
+        lines.append(
+            "\n使用 /proactive_add <序号或会话ID> 导入指定会话，"
+            "或在目标会话中直接使用 /proactive_add_current 一键导入当前会话。"
+        )
+        event.set_result(
+            MessageEventResult().message("\n".join(lines)).use_t2i(False)
+        )
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("proactive_add")
+    async def proactive_add(
+        self, event: AstrMessageEvent, selector: str = ""
+    ) -> None:
+        """导入自动发现的会话到全局会话列表"""
+        resolved = self._resolve_discovered_session_selector(selector)
+        if not resolved:
+            event.set_result(
+                MessageEventResult()
+                .message("用法: /proactive_add <序号或会话ID>")
+                .use_t2i(False)
+            )
+            return
+
+        session_id, _ = resolved
+        result_text = await self._add_discovered_session_to_config(session_id)
+        event.set_result(MessageEventResult().message(result_text).use_t2i(False))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("proactive_add_current")
+    async def proactive_add_current(self, event: AstrMessageEvent) -> None:
+        """导入当前会话到全局会话列表"""
+        session_id = event.unified_msg_origin
+        await self._record_discovered_session(event, session_id)
+
+        parsed = self._parse_session_id(session_id)
+        if not parsed:
+            event.set_result(
+                MessageEventResult()
+                .message("当前会话ID无法解析，暂时不能导入喵。")
+                .use_t2i(False)
+            )
+            return
+
+        result_text = await self._add_discovered_session_to_config(session_id)
+        event.set_result(MessageEventResult().message(result_text).use_t2i(False))
+
+    def _get_session_log_str(
+        self, session_id: str, session_config: dict | None = None
+    ) -> str:
         """
         获取统一格式的会话日志字符串。
         格式：私聊/群聊 ID 备注名
@@ -308,6 +719,26 @@ class ProactiveChatPlugin(star.Star):
         else:
             self.session_data = {}
 
+    async def _load_discovered_sessions_internal(self):
+        if await aio_os.path.exists(self.discovered_sessions_file):
+            try:
+                async with aiofiles.open(
+                    self.discovered_sessions_file, encoding="utf-8"
+                ) as f:
+                    content = await f.read()
+                    loaded = await asyncio.to_thread(json.loads, content)
+                    if isinstance(loaded, dict):
+                        self.discovered_sessions = loaded
+                    else:
+                        self.discovered_sessions = {}
+            except (OSError, json.JSONDecodeError) as e:
+                logger.error(
+                    f"[主动消息] 加载自动发现会话数据失败喵: {e}，将使用空数据启动喵。"
+                )
+                self.discovered_sessions = {}
+        else:
+            self.discovered_sessions = {}
+
     async def _save_data_internal(self):
         """
         将会话数据保存到文件（异步无锁内部实现）。
@@ -331,8 +762,25 @@ class ProactiveChatPlugin(star.Star):
                     json.dumps, self.session_data, indent=4, ensure_ascii=False
                 )
                 await f.write(content_to_write)
+            await self._save_discovered_sessions_internal()
         except OSError as e:
             logger.error(f"[主动消息] 保存会话数据失败喵: {e}")
+
+    async def _save_discovered_sessions_internal(self):
+        try:
+            await aio_os.makedirs(self.data_dir, exist_ok=True)
+            async with aiofiles.open(
+                self.discovered_sessions_file, "w", encoding="utf-8"
+            ) as f:
+                content_to_write = await asyncio.to_thread(
+                    json.dumps,
+                    self.discovered_sessions,
+                    indent=4,
+                    ensure_ascii=False,
+                )
+                await f.write(content_to_write)
+        except OSError as e:
+            logger.error(f"[主动消息] 保存自动发现会话数据失败喵: {e}")
 
     # --- 插件生命周期函数 ---
 
@@ -353,8 +801,12 @@ class ProactiveChatPlugin(star.Star):
 
         async with self.data_lock:
             await self._load_data_internal()
+            await self._load_discovered_sessions_internal()
+        self._refresh_schema_session_options()
         logger.info("[主动消息] 已成功从文件加载会话数据喵。")
-
+        logger.info(
+            f"[主动消息] 已加载 {len(self.discovered_sessions)} 个自动发现会话喵。"
+        )
         # 从持久化数据中恢复最后消息时间
         # 注意：只恢复插件启动后的消息时间，插件启动前的历史消息不影响自动触发功能
         restored_count = 0
@@ -388,6 +840,7 @@ class ProactiveChatPlugin(star.Star):
             self.timezone = None
 
         self.scheduler = AsyncIOScheduler(timezone=self.timezone)
+        assert self.scheduler is not None
         self.scheduler.start()
 
         await self._init_jobs_from_data()
@@ -447,9 +900,10 @@ class ProactiveChatPlugin(star.Star):
                 logger.error(f"[主动消息] 关闭调度器时出错喵: {e}")
 
         # 保存数据
-        if self.data_lock:
+        lock = self.data_lock
+        if lock:
             try:
-                async with self.data_lock:
+                async with lock:
                     await self._save_data_internal()
                 logger.info("[主动消息] 会话数据已保存喵。")
             except Exception as e:
@@ -484,8 +938,15 @@ class ProactiveChatPlugin(star.Star):
 
                 # 检查全局session_list
                 session_list = private_settings.get("session_list", [])
+                allow_discovered_sessions = private_settings.get(
+                    "allow_discovered_sessions", False
+                )
 
-                if not has_personal_config and not session_list:
+                if (
+                    not has_personal_config
+                    and not session_list
+                    and not allow_discovered_sessions
+                ):
                     logger.warning(
                         "[主动消息] 私聊主动消息已启用但未配置任何会话喵（既无个性化配置也无session_list）。"
                     )
@@ -520,8 +981,15 @@ class ProactiveChatPlugin(star.Star):
 
                 # 检查全局session_list
                 session_list = group_settings.get("session_list", [])
+                allow_discovered_sessions = group_settings.get(
+                    "allow_discovered_sessions", False
+                )
 
-                if not has_personal_config and not session_list:
+                if (
+                    not has_personal_config
+                    and not session_list
+                    and not allow_discovered_sessions
+                ):
                     logger.warning(
                         "[主动消息] 群聊主动消息已启用但未配置任何会话喵（既无个性化配置也无session_list）。"
                     )
@@ -552,6 +1020,10 @@ class ProactiveChatPlugin(star.Star):
             return
 
         auto_trigger_settings = session_config.get("auto_trigger_settings", {})
+        scheduler = self.scheduler
+        if scheduler is None:
+            logger.warning("[主动消息] 调度器尚未初始化，无法设置自动主动消息触发器喵。")
+            return
 
         # 检查是否启用了自动触发功能
         if not auto_trigger_settings.get("enable_auto_trigger", False):
@@ -638,7 +1110,7 @@ class ProactiveChatPlugin(star.Star):
                         )
 
                         # 直接添加到调度器，但不保存到session_data
-                        self.scheduler.add_job(
+                        scheduler.add_job(
                             self.check_and_chat,
                             "date",
                             run_date=run_date,
@@ -749,10 +1221,13 @@ class ProactiveChatPlugin(star.Star):
             session_config = private_sessions.get(session_key, {})
             if session_config.get("session_id"):
                 target_id = session_config["session_id"]
+                processing_key = self._get_session_processing_key(
+                    target_id, "FriendMessage"
+                )
                 # 无论是否启用，只要在个性化配置中存在，就标记为已处理
                 # 防止回退到全局配置
-                if target_id not in processed_sessions:
-                    processed_sessions.add(target_id)
+                if processing_key not in processed_sessions:
+                    processed_sessions.add(processing_key)
                     if session_config.get("enable", False):
                         session_name = session_config.get("session_name", "")
                         auto_trigger_count += (
@@ -773,9 +1248,12 @@ class ProactiveChatPlugin(star.Star):
             session_config = group_sessions.get(session_key, {})
             if session_config.get("session_id"):
                 target_id = session_config["session_id"]
+                processing_key = self._get_session_processing_key(
+                    target_id, "GroupMessage"
+                )
                 # 无论是否启用，只要在个性化配置中存在，就标记为已处理
-                if target_id not in processed_sessions:
-                    processed_sessions.add(target_id)
+                if processing_key not in processed_sessions:
+                    processed_sessions.add(processing_key)
                     if session_config.get("enable", False):
                         session_name = session_config.get("session_name", "")
                         auto_trigger_count += (
@@ -789,7 +1267,10 @@ class ProactiveChatPlugin(star.Star):
         session_list = private_settings.get("session_list", [])
         if private_settings.get("enable", False) and session_list:
             for target_id in session_list:
-                if target_id not in processed_sessions:
+                processing_key = self._get_session_processing_key(
+                    target_id, "FriendMessage"
+                )
+                if processing_key not in processed_sessions:
                     # 尝试从个性化配置中获取备注名，如果没有就为空
                     session_name = ""
                     for session_key in [
@@ -809,13 +1290,16 @@ class ProactiveChatPlugin(star.Star):
                             private_settings, "FriendMessage", target_id, session_name
                         )
                     )
-                    processed_sessions.add(target_id)
+                    processed_sessions.add(processing_key)
 
         group_settings = self.config.get("group_settings", {})
         session_list = group_settings.get("session_list", [])
         if group_settings.get("enable", False) and session_list:
             for target_id in session_list:
-                if target_id not in processed_sessions:
+                processing_key = self._get_session_processing_key(
+                    target_id, "GroupMessage"
+                )
+                if processing_key not in processed_sessions:
                     # 尝试从个性化配置中获取备注名，如果没有就为空
                     session_name = ""
                     for session_key in [
@@ -835,7 +1319,36 @@ class ProactiveChatPlugin(star.Star):
                             group_settings, "GroupMessage", target_id, session_name
                         )
                     )
-                    processed_sessions.add(target_id)
+                    processed_sessions.add(processing_key)
+
+        for discovered_session_id, discovered_info in self.discovered_sessions.items():
+            if discovered_session_id in processed_sessions:
+                continue
+
+            discovered_config = self._get_discovered_session_config(discovered_session_id)
+            if not discovered_config:
+                continue
+
+            if discovered_info.get("session_type") == "private":
+                auto_trigger_count += (
+                    await self._setup_auto_trigger_for_session_config(
+                        discovered_config,
+                        "FriendMessage",
+                        discovered_session_id,
+                        discovered_info.get("target_name", ""),
+                    )
+                )
+                processed_sessions.add(discovered_session_id)
+            elif discovered_info.get("session_type") == "group":
+                auto_trigger_count += (
+                    await self._setup_auto_trigger_for_session_config(
+                        discovered_config,
+                        "GroupMessage",
+                        discovered_session_id,
+                        discovered_info.get("target_name", ""),
+                    )
+                )
+                processed_sessions.add(discovered_session_id)
 
         # 4. 检查全局配置的默认设置（没有session_list的情况）
         if private_settings.get("enable", False) and not private_settings.get(
@@ -935,15 +1448,18 @@ class ProactiveChatPlugin(star.Star):
             logger.debug(f"[主动消息] {log_str} 未启用自动主动消息功能喵。")
             return 0
 
+        resolved_session_id = self._resolve_configured_session_id(target_id, message_type)
+        if not resolved_session_id:
+            logger.warning(f"[主动消息] {log_str} 无法解析为有效会话，跳过自动触发器设置喵。")
+            return 0
+
         # 检查是否已经有持久化的主动消息任务
         has_existing_task = False
         current_time = time.time()
         # 使用 list() 创建副本以避免并发迭代时字典大小改变的风险
         for session_id, session_info in list(self.session_data.items()):
-            if session_info.get("next_trigger_time") and session_id.endswith(
-                f":{message_type}:{target_id}"
-            ):
-                next_trigger = session_info.get("next_trigger_time")
+            next_trigger = session_info.get("next_trigger_time")
+            if isinstance(next_trigger, (int, float)) and session_id == resolved_session_id:
                 trigger_time_with_grace = next_trigger + 60
                 is_not_expired = current_time < trigger_time_with_grace
 
@@ -959,18 +1475,7 @@ class ProactiveChatPlugin(star.Star):
             )
             return 0
 
-        # 尝试解析 target_id 中是否包含平台信息
-        parsed = self._parse_session_id(target_id)
-        preferred_platform = None
-        real_target_id = target_id
-        if parsed:
-            preferred_platform, _, real_t_id = parsed
-            real_target_id = real_t_id
-
-        # 优雅地获取完整的 UMO 喵
-        session_id = self._resolve_full_umo(
-            real_target_id, message_type, preferred_platform
-        )
+        session_id = resolved_session_id
         logger.debug(f"[主动消息] 正在为 {log_str} 设置自动触发器喵。")
         # 在外层函数统一打印完整的日志信息，内层函数静默执行，避免重复
         auto_trigger_minutes = auto_trigger_settings.get(
@@ -984,7 +1489,7 @@ class ProactiveChatPlugin(star.Star):
         return 1
 
     def _resolve_full_umo(
-        self, target_id: str, msg_type: str, preferred_platform: str = None
+        self, target_id: str, msg_type: str, preferred_platform: str | None = None
     ) -> str:
         """
         动态解析并验证存活的 UMO 喵。
@@ -1010,6 +1515,15 @@ class ProactiveChatPlugin(star.Star):
 
         # 1. 优先从历史记录匹配，但必须验证平台依然“运行中”喵
         for existing_id in self.session_data.keys():
+            if type_keyword in existing_id and existing_id.endswith(f":{target_id}"):
+                p_id = existing_id.split(":")[0]
+                if (
+                    p_id in active_insts
+                    and active_insts[p_id].status == PlatformStatus.RUNNING
+                ):
+                    return existing_id
+
+        for existing_id in self.discovered_sessions.keys():
             if type_keyword in existing_id and existing_id.endswith(f":{target_id}"):
                 p_id = existing_id.split(":")[0]
                 if (
@@ -1051,9 +1565,15 @@ class ProactiveChatPlugin(star.Star):
 
         # 根据消息类型分别处理，使用模糊匹配以支持不同平台的命名喵
         if "Friend" in message_type or "Private" in message_type:
-            return self._get_private_session_config(session_id, target_id)
+            config = self._get_private_session_config(session_id, target_id)
+            if config:
+                return config
+            return self._get_discovered_session_config(session_id)
         elif "Group" in message_type:
-            return self._get_group_session_config(session_id, target_id)
+            config = self._get_group_session_config(session_id, target_id)
+            if config:
+                return config
+            return self._get_discovered_session_config(session_id)
 
         return None
 
@@ -1073,8 +1593,8 @@ class ProactiveChatPlugin(star.Star):
             session_config = private_sessions.get(session_key, {})
             # 兼容多段式 ID：只要配置的 ID 是目标 ID 的一部分（通常是末尾）喵
             config_id = str(session_config.get("session_id", ""))
-            if config_id and (
-                target_id == config_id or target_id.endswith(f":{config_id}")
+            if config_id and self._is_configured_session_match(
+                config_id, session_id, target_id, "private"
             ):
                 if session_config.get("enable", False):
                     # 添加会话名称到配置中，用于日志显示
@@ -1094,12 +1614,14 @@ class ProactiveChatPlugin(star.Star):
             return None
 
         session_list = private_settings.get("session_list", [])
-        if target_id in session_list:
-            # 只有明确在list中的才提供服务
-            config_copy = private_settings.copy()
-            config_copy["_session_type"] = "private"
-            config_copy["_from_session_list"] = True
-            return config_copy
+        for configured_value in session_list:
+            if self._is_configured_session_match(
+                str(configured_value), session_id, target_id, "private"
+            ):
+                config_copy = private_settings.copy()
+                config_copy["_session_type"] = "private"
+                config_copy["_from_session_list"] = True
+                return config_copy
 
         return None
 
@@ -1117,8 +1639,8 @@ class ProactiveChatPlugin(star.Star):
             session_config = group_sessions.get(session_key, {})
             # 兼容多段式 ID：只要配置的 ID 是目标 ID 的一部分（通常是末尾）喵
             config_id = str(session_config.get("session_id", ""))
-            if config_id and (
-                target_id == config_id or target_id.endswith(f":{config_id}")
+            if config_id and self._is_configured_session_match(
+                config_id, session_id, target_id, "group"
             ):
                 if session_config.get("enable", False):
                     # 添加会话名称到配置中，用于日志显示
@@ -1138,12 +1660,14 @@ class ProactiveChatPlugin(star.Star):
             return None
 
         session_list = group_settings.get("session_list", [])
-        if target_id in session_list:
-            # 只有明确在list中的才提供服务
-            config_copy = group_settings.copy()
-            config_copy["_session_type"] = "group"
-            config_copy["_from_session_list"] = True
-            return config_copy
+        for configured_value in session_list:
+            if self._is_configured_session_match(
+                str(configured_value), session_id, target_id, "group"
+            ):
+                config_copy = group_settings.copy()
+                config_copy["_session_type"] = "group"
+                config_copy["_from_session_list"] = True
+                return config_copy
 
         return None
 
@@ -1168,6 +1692,10 @@ class ProactiveChatPlugin(star.Star):
         """
         restored_count = 0
         current_time = time.time()
+        scheduler = self.scheduler
+        lock = self.data_lock
+        if scheduler is None or lock is None:
+            return
 
         # 增强调试信息
         logger.info(
@@ -1178,8 +1706,8 @@ class ProactiveChatPlugin(star.Star):
         if cleaned_count > 0:
             logger.info(f"[主动消息] 清理了 {cleaned_count} 个无效的会话数据条目喵。")
             # 立即保存清理后的数据
-            async with self.data_lock:
-                self._save_data_internal()
+            async with lock:
+                await self._save_data_internal()
 
         logger.info(f"[主动消息] 会话数据条目数: {len(self.session_data)}")
 
@@ -1193,7 +1721,7 @@ class ProactiveChatPlugin(star.Star):
             next_trigger = session_info.get("next_trigger_time")
 
             # 修正任务恢复逻辑，避免过早清理数据导致无法恢复
-            if next_trigger:
+            if isinstance(next_trigger, (int, float)):
                 # 检查任务是否过期（给1分钟的宽限期）
                 trigger_time_with_grace = next_trigger + 60
                 is_not_expired = current_time < trigger_time_with_grace
@@ -1205,14 +1733,14 @@ class ProactiveChatPlugin(star.Star):
                         )
 
                         # 检查是否已存在相同任务，避免重复
-                        existing_job = self.scheduler.get_job(session_id)
+                        existing_job = scheduler.get_job(session_id)
                         if existing_job:
                             logger.debug(
                                 f"[主动消息] {self._get_session_log_str(session_id, session_config)} 的任务已存在，跳过恢复喵。"
                             )
                             continue
 
-                        self.scheduler.add_job(
+                        scheduler.add_job(
                             self.check_and_chat,
                             "date",
                             run_date=run_date,
@@ -1275,10 +1803,14 @@ class ProactiveChatPlugin(star.Star):
         session_config = self._get_session_config(session_id)
         if not session_config:
             return
+        scheduler = self.scheduler
+        lock = self.data_lock
+        if scheduler is None or lock is None:
+            return
 
         schedule_conf = session_config.get("schedule_settings", {})
 
-        async with self.data_lock:
+        async with lock:
             if reset_counter:
                 self.session_data.setdefault(session_id, {})["unanswered_count"] = 0
 
@@ -1290,7 +1822,7 @@ class ProactiveChatPlugin(star.Star):
             next_trigger_time = time.time() + random_interval
             run_date = datetime.fromtimestamp(next_trigger_time, tz=self.timezone)
 
-            self.scheduler.add_job(
+            scheduler.add_job(
                 self.check_and_chat,
                 "date",
                 run_date=run_date,
@@ -1319,10 +1851,15 @@ class ProactiveChatPlugin(star.Star):
             return
 
         session_id = event.unified_msg_origin
+        await self._record_discovered_session(event, session_id)
+        lock = self.data_lock
+        scheduler = self.scheduler
+        if lock is None:
+            return
 
         # 缓存 self_id
         if event.get_self_id():
-            async with self.data_lock:
+            async with lock:
                 self.session_data.setdefault(session_id, {})["self_id"] = (
                     event.get_self_id()
                 )
@@ -1333,7 +1870,7 @@ class ProactiveChatPlugin(star.Star):
         self.last_message_times[session_id] = current_time
 
         # 持久化插件启动后的消息时间，确保插件重载后能恢复状态
-        async with self.data_lock:
+        async with lock:
             # 只保存插件启动后的消息时间
             if current_time >= self.plugin_start_time:
                 self.session_data.setdefault(session_id, {})["last_message_time"] = (
@@ -1360,13 +1897,14 @@ class ProactiveChatPlugin(star.Star):
             return
 
         # 在重新调度前，先尝试取消任何已存在的、由 APScheduler 设置的定时任务
-        try:
-            self.scheduler.remove_job(session_id)
-            logger.info(
-                f"[主动消息] 用户已回复喵，已取消 {self._get_session_log_str(session_id, session_config)} 的主动消息任务喵。"
-            )
-        except Exception:  # JobLookupError
-            pass  # 如果任务不存在，说明是正常情况，无需处理
+        if scheduler is not None:
+            try:
+                scheduler.remove_job(session_id)
+                logger.info(
+                    f"[主动消息] 用户已回复喵，已取消 {self._get_session_log_str(session_id, session_config)} 的主动消息任务喵。"
+                )
+            except Exception:  # JobLookupError
+                pass  # 如果任务不存在，说明是正常情况，无需处理
 
         # 重要：只重置当前会话的计数器，不影响其他会话
         logger.info(
@@ -1383,10 +1921,15 @@ class ProactiveChatPlugin(star.Star):
             return
 
         session_id = event.unified_msg_origin
+        await self._record_discovered_session(event, session_id)
+        lock = self.data_lock
+        scheduler = self.scheduler
+        if lock is None:
+            return
 
         # 缓存 self_id
         if event.get_self_id():
-            async with self.data_lock:
+            async with lock:
                 self.session_data.setdefault(session_id, {})["self_id"] = (
                     event.get_self_id()
                 )
@@ -1402,7 +1945,7 @@ class ProactiveChatPlugin(star.Star):
         self.last_message_times[session_id] = current_time
 
         # 只持久化插件启动后的消息时间，用于自动触发功能
-        async with self.data_lock:
+        async with lock:
             if current_time >= self.plugin_start_time:
                 self.session_data.setdefault(session_id, {})["last_message_time"] = (
                     current_time
@@ -1454,21 +1997,22 @@ class ProactiveChatPlugin(star.Star):
             return
 
         # 群聊活跃时取消已预定的 APScheduler 任务
-        try:
-            self.scheduler.remove_job(session_id)
-            logger.info(
-                f"[主动消息] 群聊活跃喵，已取消 {self._get_session_log_str(session_id, session_config)} 的主动消息任务喵。"
-            )
-        except Exception as e:  # JobLookupError
-            logger.debug(
-                f"[主动消息] {self._get_session_log_str(session_id, session_config)} 没有待取消的调度任务喵: {e}"
-            )
+        if scheduler is not None:
+            try:
+                scheduler.remove_job(session_id)
+                logger.info(
+                    f"[主动消息] 群聊活跃喵，已取消 {self._get_session_log_str(session_id, session_config)} 的主动消息任务喵。"
+                )
+            except Exception as e:  # JobLookupError
+                logger.debug(
+                    f"[主动消息] {self._get_session_log_str(session_id, session_config)} 没有待取消的调度任务喵: {e}"
+                )
 
         # 无论是用户消息还是Bot消息，都应该重置沉默倒计时和未回复计数器
         await self._reset_group_silence_timer(session_id)
 
         # 每个会话(私聊/群聊)有独立的session_id和数据，不会相互影响
-        async with self.data_lock:
+        async with lock:
             if session_id in self.session_data:
                 current_unanswered = self.session_data[session_id].get(
                     "unanswered_count", 0
@@ -1482,10 +2026,7 @@ class ProactiveChatPlugin(star.Star):
                 # 清理已作废的定时任务数据，避免重复恢复
                 # 重要：只清理群聊的定时任务数据，因为群聊使用沉默倒计时机制
                 # 私聊使用APScheduler，不应该在这里清理
-                if (
-                    "group" in session_id.lower()
-                    and "next_trigger_time" in self.session_data[session_id]
-                ):
+                if self._is_group_session(session_id) and "next_trigger_time" in self.session_data[session_id]:
                     del self.session_data[session_id]["next_trigger_time"]
 
     # --- Bot消息检测 ---
@@ -1498,7 +2039,7 @@ class ProactiveChatPlugin(star.Star):
         session_id = event.unified_msg_origin
 
         # 只关注群聊消息
-        if "group" not in session_id.lower():
+        if not self._is_group_session(session_id):
             return
 
         current_time = time.time()
@@ -2107,7 +2648,7 @@ class ProactiveChatPlugin(star.Star):
                 await self._send_chain_with_hooks(session_id, [Plain(text=text)])
 
         # Bot 自己发送的消息，也应该被视为一次"活动"，重置群聊的沉默倒计时
-        if "group" in session_id.lower():
+        if self._is_group_session(session_id):
             # 立即重置，不要等待，确保时序正确
             await self._reset_group_silence_timer(session_id)
             logger.info(
@@ -2159,7 +2700,12 @@ class ProactiveChatPlugin(star.Star):
             logger.warning("[主动消息] 对话存档失败喵，但会继续执行后续步骤喵。")
 
         # 2. 然后再获取锁，执行关键区代码
-        async with self.data_lock:
+        lock = self.data_lock
+        scheduler = self.scheduler
+        if lock is None:
+            return
+
+        async with lock:
             # 更新计数器 (对私聊和群聊都适用)
             # 只有在Bot成功发送消息给用户后，才增加未回复计数器
             # 每个会话(私聊/群聊)都有独立的计数器，不会相互影响
@@ -2172,7 +2718,7 @@ class ProactiveChatPlugin(star.Star):
             )
 
             # 重新调度 (只对私聊进行立即的、连续的重新调度)
-            if "private" in session_id.lower() or "friendmessage" in session_id.lower():
+            if self._is_private_session(session_id):
                 session_config = self._get_session_config(session_id)
                 if not session_config:
                     return
@@ -2187,7 +2733,10 @@ class ProactiveChatPlugin(star.Star):
                 next_trigger_time = time.time() + random_interval
                 run_date = datetime.fromtimestamp(next_trigger_time, tz=self.timezone)
 
-                self.scheduler.add_job(
+                if scheduler is None:
+                    return
+
+                scheduler.add_job(
                     self.check_and_chat,
                     "date",
                     run_date=run_date,
@@ -2222,7 +2771,12 @@ class ProactiveChatPlugin(star.Star):
         支持AstrBot 4.5.7+新API，同时保持向后兼容性。
         具备完善的错误处理机制，确保任务链不会中断。
         """
+        lock = self.data_lock
+        session_config: dict | None = None
         try:
+            if lock is None:
+                return
+
             if not await self._is_chat_allowed(session_id):
                 logger.info("[主动消息] 当前为免打扰时段，跳过并重新调度喵。")
                 await self._schedule_next_chat_and_save(session_id)
@@ -2234,7 +2788,7 @@ class ProactiveChatPlugin(star.Star):
 
             schedule_conf = session_config.get("schedule_settings", {})
 
-            async with self.data_lock:
+            async with lock:
                 unanswered_count = self.session_data.get(session_id, {}).get(
                     "unanswered_count", 0
                 )
@@ -2456,8 +3010,8 @@ class ProactiveChatPlugin(star.Star):
 
                 # 任务成功完成后，区分不同情况来处理数据持久化，正确处理定时任务数据
                 # 情况1: 群聊任务 - 清理数据，因为群聊使用沉默倒计时机制
-                if "group" in session_id.lower():
-                    async with self.data_lock:
+                if self._is_group_session(session_id):
+                    async with lock:
                         if (
                             session_id in self.session_data
                             and "next_trigger_time" in self.session_data[session_id]
@@ -2469,7 +3023,7 @@ class ProactiveChatPlugin(star.Star):
                 else:
                     # 安全更新数据，避免数据丢失
                     # 私聊任务保留next_trigger_time数据，用于程序重启时恢复
-                    async with self.data_lock:
+                    async with lock:
                         # 安全地更新数据，而不是完全替换，避免数据丢失
                         if session_id in self.session_data:
                             # 只更新必要的字段，保留其他现有数据
@@ -2510,7 +3064,9 @@ class ProactiveChatPlugin(star.Star):
 
             # 任务失败后也清理数据，避免残留
             try:
-                async with self.data_lock:
+                if lock is None:
+                    return
+                async with lock:
                     if (
                         session_id in self.session_data
                         and "next_trigger_time" in self.session_data[session_id]
@@ -2556,7 +3112,7 @@ class ProactiveChatPlugin(star.Star):
             del self.session_temp_state[session_id]
 
 
-def is_quiet_time(quiet_hours_str: str, tz: zoneinfo.ZoneInfo) -> bool:
+def is_quiet_time(quiet_hours_str: str, tz: zoneinfo.ZoneInfo | None) -> bool:
     """检查当前时间是否处于免打扰时段。"""
     try:
         start_str, end_str = quiet_hours_str.split("-")
