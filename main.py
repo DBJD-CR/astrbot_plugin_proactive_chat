@@ -18,6 +18,8 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from .core.chat_flow import ProactiveCoreMixin
 from .core.data_storage import StorageMixin
 from .core.llm_adapter import LlmMixin
+from .core.agent_runner import AgentRunnerMixin
+from .core.image_generator import ImageMixin
 from .core.message_events import EventsMixin
 from .core.message_sender import SenderMixin
 from .core.notification_center import NotificationCenter
@@ -37,7 +39,9 @@ class ProactiveChatPlugin(
     ConfigMixin,  # 配置读取与会话级配置路由
     SchedulerMixin,  # 定时任务、自动触发与沉默计时
     LlmMixin,  # 上下文准备与 LLM 调用封装
+    AgentRunnerMixin,  # 主动消息链式工具调用与模型自动回退（issue #56）
     SenderMixin,  # 主动消息发送与装饰钩子
+    ImageMixin,  # 主动消息配图（工具循环 Agent 驱动任意生图插件）
     EventsMixin,  # 私聊/群聊事件监听处理
     LifecycleMixin,  # initialize/terminate 生命周期管理
     ProactiveCoreMixin,  # 主动消息主流程编排
@@ -98,6 +102,11 @@ class ProactiveChatPlugin(
             str, dict
         ] = {}  # 临时态（如群聊最后用户发言时间）
         self.last_message_times: dict[str, float] = {}  # 会话最近消息时间，用于触发判断
+        # 配图工具选择缓存：避免每次发送都扫描全部工具。
+        self._image_tools_cache: list[str] = []  # 已选定的生图工具名
+        self._image_tools_selected: bool = False  # 是否已成功选定
+        self._image_tools_attempts: int = 0  # 累计选不到的次数
+        self._image_tools_disabled: bool = False  # 连续 3 次选不到后永久回退
         self.auto_trigger_timers: dict[
             str, asyncio.TimerHandle
         ] = {}  # 自动触发计时器句柄

@@ -48,6 +48,21 @@ class LlmMixin:
                 return False
         return default
 
+    @staticmethod
+    def _parse_persona_settings(persona_settings: Any) -> tuple[str, str, str]:
+        """解析人格配置，返回 (mode, persona_id, custom_persona)。
+
+        mode 规范化为 off/select/custom 之一；非法值按 off 处理。
+        """
+        if not isinstance(persona_settings, dict):
+            return "off", "", ""
+        mode = str(persona_settings.get("persona_mode", "off") or "off").strip().lower()
+        if mode not in {"off", "select", "custom"}:
+            mode = "off"
+        persona_id = str(persona_settings.get("persona_id", "") or "").strip()
+        custom_persona = str(persona_settings.get("custom_persona", "") or "").strip()
+        return mode, persona_id, custom_persona
+
     def _parse_bot_identifiers(self, value: Any) -> set[str]:
         normalized: set[str] = set()
         if isinstance(value, str):
@@ -610,9 +625,52 @@ class LlmMixin:
                 )
                 pure_history_messages = []
 
-            # 获取人格设定：优先会话 persona，再回退默认 persona
+            # 获取人格设定。
+            # 优先级：配置指定（select/custom，严格覆盖）→ 会话 persona → 默认 persona。
             original_system_prompt = ""
-            if conversation and conversation.persona_id:
+
+            persona_session_config = {}
+            get_session_config = getattr(self, "_get_session_config", None)
+            if callable(get_session_config):
+                try:
+                    persona_session_config = (
+                        get_session_config(effective_session_id) or {}
+                    )
+                except Exception:
+                    persona_session_config = {}
+            persona_settings = persona_session_config.get("persona_settings", {}) or {}
+            persona_mode, configured_persona_id, custom_persona = (
+                self._parse_persona_settings(persona_settings)
+            )
+
+            if persona_mode == "custom":
+                if custom_persona:
+                    original_system_prompt = custom_persona
+                    logger.info("[主动消息] 使用配置的自定义人格设定喵。")
+            elif persona_mode == "select":
+                if configured_persona_id:
+                    try:
+                        configured_persona = (
+                            self.context.persona_manager.get_persona_v3_by_id(
+                                configured_persona_id
+                            )
+                        )
+                    except Exception as e:
+                        configured_persona = None
+                        logger.warning(
+                            f"[主动消息] 读取配置人格 '{configured_persona_id}' 失败喵: {e}"
+                        )
+                    if configured_persona:
+                        original_system_prompt = configured_persona["prompt"]
+                        logger.info(
+                            f"[主动消息] 使用配置指定的人格: '{configured_persona_id}' 喵"
+                        )
+                    else:
+                        logger.warning(
+                            f"[主动消息] 配置指定的人格 '{configured_persona_id}' 未找到，回退为会话/默认人格喵。"
+                        )
+
+            if not original_system_prompt and conversation and conversation.persona_id:
                 persona = await self.context.persona_manager.get_persona(
                     conversation.persona_id
                 )
@@ -721,6 +779,52 @@ class LlmMixin:
         ).replace("{{current_time}}", now_str)
 
         logger.debug("[主动消息] 已生成包含动机和时间的 Prompt 喵。")
+
+        # 链式工具调用 / 模型自动回退（issue #56）：
+        # 仅在显式开启时改走工具循环 Agent；否则维持原有的单次生成路径，零回归。
+        agent_conf = session_config.get("agent_settings", {}) or {}
+        tool_mode = str(agent_conf.get("tool_mode", "off") or "off").strip().lower()
+        fallback_enabled = self._parse_bool_setting(
+            agent_conf.get("model_fallback_enable", False), default=False
+        )
+        run_agent = getattr(self, "_run_proactive_agent", None)
+        if (tool_mode in ("whitelist", "all") or fallback_enabled) and callable(
+            run_agent
+        ):
+            history_for_agent = self._sanitize_history_content(history_messages)
+            agent_text = await run_agent(
+                session_id,
+                final_user_simulation_prompt,
+                history_for_agent,
+                system_prompt,
+                agent_conf,
+            )
+            if agent_text:
+                if agent_text == "[object Object]":
+                    logger.error(
+                        "[主动消息] 喵呜！工具循环 Agent 返回了意料之外的 '[object Object]' 字符串喵！"
+                    )
+                    logger.warning("[主动消息] 已拦截本次发送喵。")
+                    return None, final_user_simulation_prompt
+                logger.info(
+                    f"[主动消息] 工具循环 Agent 已生成文本喵，长度: {len(agent_text)}。"
+                )
+                if self.telemetry and self.telemetry.enabled:
+                    # 记录 Agent 路径成功，便于与单次生成路径拆分分析。
+                    self._track_task(
+                        asyncio.create_task(
+                            self.telemetry.track_feature(
+                                "llm_generate_result",
+                                {
+                                    "provider_mode": "tool_loop_agent",
+                                    "success": True,
+                                    "history_count": len(history_for_agent),
+                                },
+                            )
+                        )
+                    )
+                return agent_text, final_user_simulation_prompt
+            logger.info("[主动消息] 工具循环 Agent 未产出可用文本，降级为单次生成喵。")
 
         llm_response_obj = None
         try:

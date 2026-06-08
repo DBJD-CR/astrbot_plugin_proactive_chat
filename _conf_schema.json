@@ -158,6 +158,151 @@
                     }
                 }
             },
+            "image_settings": {
+                "description": "🖼️ 私聊主动消息配图设置",
+                "type": "object",
+                "items": {
+                    "mode": {
+                        "description": "🎨 配图模式",
+                        "type": "string",
+                        "options": [
+                            "off",
+                            "auto",
+                            "always"
+                        ],
+                        "default": "off",
+                        "labels": [
+                            "不生图",
+                            "Bot 自行判断",
+                            "直接生图"
+                        ],
+                        "hint": "off=只发文本；auto=让模型判断这条消息是否适合配图并自行调用可用的生图工具；always=尽量为每条主动消息配图。依赖你已安装的任意生图插件（向主 LLM 注册了工具），未安装则自动只发文本。"
+                    },
+                    "extra_prompt": {
+                        "description": "📝 配图引导补充（可选）",
+                        "type": "string",
+                        "default": "",
+                        "hint": "附加在配图决策提示后的额外说明，例如画风偏好。留空则仅依据消息内容自行判断。"
+                    },
+                    "extra_tools": {
+                        "description": "➕ 额外生图工具名（可选）",
+                        "type": "list",
+                        "default": [],
+                        "hint": "默认会按关键词（draw/image/生图/绘图 等，匹配工具名与描述）自动识别生图工具。如果你的生图插件工具名不含这些关键词（例如 nano_banana、flux），在这里补上它的 LLM 工具名，每行一个。"
+                    },
+                    "exclude_tools": {
+                        "description": "➖ 排除的工具名（可选）",
+                        "type": "list",
+                        "default": [],
+                        "hint": "如果自动识别误把某个非生图工具当成了生图工具（例如 read_image_file 这类），在这里填它的名字排除掉，每行一个。"
+                    }
+                }
+            },
+            "agent_settings": {
+                "description": "🛠️ 主动消息工具调用与模型回退",
+                "type": "object",
+                "items": {
+                    "tool_mode": {
+                        "description": "🔧 工具调用模式",
+                        "type": "string",
+                        "options": [
+                            "off",
+                            "whitelist",
+                            "all"
+                        ],
+                        "default": "off",
+                        "labels": [
+                            "不调用工具",
+                            "仅白名单工具",
+                            "全部已注册工具"
+                        ],
+                        "hint": "off=维持现状，单次生成正文不调用任何工具；whitelist=只把下方“包含工具名”里填写的工具暴露给主动消息的 Agent，由模型在一次主动消息里按需多次调用（链式工具调用）；all=暴露全部已注册工具（风险较高，可能触及删文件/发消息等工具，请谨慎）。"
+                    },
+                    "include_tools": {
+                        "description": "➕ 包含工具名（whitelist 模式）",
+                        "type": "list",
+                        "default": [],
+                        "condition": {
+                            "tool_mode": "whitelist"
+                        },
+                        "hint": "whitelist 模式下要暴露给 Agent 的 LLM 工具名，每行一个（例如 get_weather、search_news）。仅在 tool_mode=whitelist 时生效。"
+                    },
+                    "exclude_tools": {
+                        "description": "➖ 排除工具名",
+                        "type": "list",
+                        "default": [],
+                        "hint": "任何模式下都会强制排除的工具名，每行一个。用于从 all 全集或自动选择中剔除不希望主动消息使用的工具。"
+                    },
+                    "max_steps": {
+                        "description": "🔁 工具循环最大步数",
+                        "type": "int",
+                        "default": 0,
+                        "hint": "一次主动消息中允许的最大工具调用步数，防止工具循环失控或刷 token。0=自动（按本次暴露的工具数推导，约为工具数×2+2，范围 3~30）；填正数则固定为该值。",
+                        "slider": {
+                            "min": 0,
+                            "max": 30,
+                            "step": 1
+                        }
+                    },
+                    "model_fallback_enable": {
+                        "description": "🔀 启用模型自动回退",
+                        "type": "bool",
+                        "default": false,
+                        "hint": "开启后，当首选模型不可用（限流/报错/空输出）时，自动顺延切换到备选模型。适合薅 ModelScope 等免费但限流严格的平台。注意：开启后正文生成会改走工具循环 Agent（即使不配工具，也只是带回退的单次调用）。"
+                    },
+                    "model_fallback_models": {
+                        "description": "📋 备选模型 Provider ID（可选）",
+                        "type": "list",
+                        "items": {
+                            "type": "string"
+                        },
+                        "_special": "select_providers",
+                        "default": [],
+                        "hint": "按优先顺序选择备选对话模型，主模型请求失败时按顺序切换。留空且已启用回退时，将自动读取 AstrBot 全局“服务提供商设置”里的 fallback_chat_models，与本体回退行为对齐。"
+                    }
+                }
+            },
+            "persona_settings": {
+                "description": "🎭 主动消息人格设置",
+                "type": "object",
+                "items": {
+                    "persona_mode": {
+                        "description": "🎭 人格来源",
+                        "type": "string",
+                        "options": [
+                            "off",
+                            "select",
+                            "custom"
+                        ],
+                        "default": "off",
+                        "labels": [
+                            "跟随会话/默认",
+                            "选择已有人格",
+                            "自定义人格"
+                        ],
+                        "hint": "off=维持现状，按“会话人格→默认人格”自动选择；select=为主动消息指定一个已有人格，严格覆盖会话与默认人格；custom=直接填写一段人格提示词作为主动消息的人设，同样严格覆盖。"
+                    },
+                    "persona_id": {
+                        "description": "🎭 选择人格（select 模式）",
+                        "type": "string",
+                        "_special": "select_persona",
+                        "default": "",
+                        "condition": {
+                            "persona_mode": "select"
+                        },
+                        "hint": "select 模式下为主动消息指定的人格。留空则回退为现状的“会话人格→默认人格”自动选择。"
+                    },
+                    "custom_persona": {
+                        "description": "📝 自定义人格提示词（custom 模式）",
+                        "type": "text",
+                        "default": "",
+                        "condition": {
+                            "persona_mode": "custom"
+                        },
+                        "hint": "custom 模式下直接作为主动消息的人格提示词（system prompt）使用。留空则回退为现状的“会话人格→默认人格”自动选择。"
+                    }
+                }
+            },
             "segmented_reply_settings": {
                 "description": "🔪 分段回复设置",
                 "type": "object",
@@ -432,6 +577,151 @@
                         "type": "bool",
                         "default": true,
                         "hint": "开启后，即使 TTS 成功发送了语音，也会再发送一条纯文本原文，确保所有人都能看到内容"
+                    }
+                }
+            },
+            "image_settings": {
+                "description": "🖼️ 群聊主动消息配图设置",
+                "type": "object",
+                "items": {
+                    "mode": {
+                        "description": "🎨 配图模式",
+                        "type": "string",
+                        "options": [
+                            "off",
+                            "auto",
+                            "always"
+                        ],
+                        "default": "off",
+                        "labels": [
+                            "不生图",
+                            "Bot 自行判断",
+                            "直接生图"
+                        ],
+                        "hint": "off=只发文本；auto=让模型判断这条消息是否适合配图并自行调用可用的生图工具；always=尽量为每条主动消息配图。依赖你已安装的任意生图插件（向主 LLM 注册了工具），未安装则自动只发文本。"
+                    },
+                    "extra_prompt": {
+                        "description": "📝 配图引导补充（可选）",
+                        "type": "string",
+                        "default": "",
+                        "hint": "附加在配图决策提示后的额外说明，例如画风偏好。留空则仅依据消息内容自行判断。"
+                    },
+                    "extra_tools": {
+                        "description": "➕ 额外生图工具名（可选）",
+                        "type": "list",
+                        "default": [],
+                        "hint": "默认会按关键词（draw/image/生图/绘图 等，匹配工具名与描述）自动识别生图工具。如果你的生图插件工具名不含这些关键词（例如 nano_banana、flux），在这里补上它的 LLM 工具名，每行一个。"
+                    },
+                    "exclude_tools": {
+                        "description": "➖ 排除的工具名（可选）",
+                        "type": "list",
+                        "default": [],
+                        "hint": "如果自动识别误把某个非生图工具当成了生图工具（例如 read_image_file 这类），在这里填它的名字排除掉，每行一个。"
+                    }
+                }
+            },
+            "agent_settings": {
+                "description": "🛠️ 主动消息工具调用与模型回退",
+                "type": "object",
+                "items": {
+                    "tool_mode": {
+                        "description": "🔧 工具调用模式",
+                        "type": "string",
+                        "options": [
+                            "off",
+                            "whitelist",
+                            "all"
+                        ],
+                        "default": "off",
+                        "labels": [
+                            "不调用工具",
+                            "仅白名单工具",
+                            "全部已注册工具"
+                        ],
+                        "hint": "off=维持现状，单次生成正文不调用任何工具；whitelist=只把下方“包含工具名”里填写的工具暴露给主动消息的 Agent，由模型在一次主动消息里按需多次调用（链式工具调用）；all=暴露全部已注册工具（风险较高，可能触及删文件/发消息等工具，请谨慎）。"
+                    },
+                    "include_tools": {
+                        "description": "➕ 包含工具名（whitelist 模式）",
+                        "type": "list",
+                        "default": [],
+                        "condition": {
+                            "tool_mode": "whitelist"
+                        },
+                        "hint": "whitelist 模式下要暴露给 Agent 的 LLM 工具名，每行一个（例如 get_weather、search_news）。仅在 tool_mode=whitelist 时生效。"
+                    },
+                    "exclude_tools": {
+                        "description": "➖ 排除工具名",
+                        "type": "list",
+                        "default": [],
+                        "hint": "任何模式下都会强制排除的工具名，每行一个。用于从 all 全集或自动选择中剔除不希望主动消息使用的工具。"
+                    },
+                    "max_steps": {
+                        "description": "🔁 工具循环最大步数",
+                        "type": "int",
+                        "default": 0,
+                        "hint": "一次主动消息中允许的最大工具调用步数，防止工具循环失控或刷 token。0=自动（按本次暴露的工具数推导，约为工具数×2+2，范围 3~30）；填正数则固定为该值。",
+                        "slider": {
+                            "min": 0,
+                            "max": 30,
+                            "step": 1
+                        }
+                    },
+                    "model_fallback_enable": {
+                        "description": "🔀 启用模型自动回退",
+                        "type": "bool",
+                        "default": false,
+                        "hint": "开启后，当首选模型不可用（限流/报错/空输出）时，自动顺延切换到备选模型。适合薅 ModelScope 等免费但限流严格的平台。注意：开启后正文生成会改走工具循环 Agent（即使不配工具，也只是带回退的单次调用）。"
+                    },
+                    "model_fallback_models": {
+                        "description": "📋 备选模型 Provider ID（可选）",
+                        "type": "list",
+                        "items": {
+                            "type": "string"
+                        },
+                        "_special": "select_providers",
+                        "default": [],
+                        "hint": "按优先顺序选择备选对话模型，主模型请求失败时按顺序切换。留空且已启用回退时，将自动读取 AstrBot 全局“服务提供商设置”里的 fallback_chat_models，与本体回退行为对齐。"
+                    }
+                }
+            },
+            "persona_settings": {
+                "description": "🎭 主动消息人格设置",
+                "type": "object",
+                "items": {
+                    "persona_mode": {
+                        "description": "🎭 人格来源",
+                        "type": "string",
+                        "options": [
+                            "off",
+                            "select",
+                            "custom"
+                        ],
+                        "default": "off",
+                        "labels": [
+                            "跟随会话/默认",
+                            "选择已有人格",
+                            "自定义人格"
+                        ],
+                        "hint": "off=维持现状，按“会话人格→默认人格”自动选择；select=为主动消息指定一个已有人格，严格覆盖会话与默认人格；custom=直接填写一段人格提示词作为主动消息的人设，同样严格覆盖。"
+                    },
+                    "persona_id": {
+                        "description": "🎭 选择人格（select 模式）",
+                        "type": "string",
+                        "_special": "select_persona",
+                        "default": "",
+                        "condition": {
+                            "persona_mode": "select"
+                        },
+                        "hint": "select 模式下为主动消息指定的人格。留空则回退为现状的“会话人格→默认人格”自动选择。"
+                    },
+                    "custom_persona": {
+                        "description": "📝 自定义人格提示词（custom 模式）",
+                        "type": "text",
+                        "default": "",
+                        "condition": {
+                            "persona_mode": "custom"
+                        },
+                        "hint": "custom 模式下直接作为主动消息的人格提示词（system prompt）使用。留空则回退为现状的“会话人格→默认人格”自动选择。"
                     }
                 }
             },

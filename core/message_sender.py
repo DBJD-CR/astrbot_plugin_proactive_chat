@@ -416,6 +416,20 @@ class SenderMixin:
         # 是否继续发送文本：未发出 TTS 或配置要求始终发文本
         should_send_text = not is_tts_sent or tts_conf.get("always_send_text", True)
 
+        # 配图：在发送文本之前先生成并发送图片（先图后文）。
+        # 生图是同步等待的，因此文本会等图片就绪后再发，不会出现“文本先到、图掉队”。
+        # 图片由本插件统一发送，走与文本相同的装饰钩子与平台历史持久化流程。
+        try:
+            images = await self._maybe_generate_proactive_images(
+                session_id, text, session_config
+            )
+            for image in images:
+                await self._send_chain_with_hooks(session_id, [image])
+                await asyncio.sleep(0.3)
+        except Exception as e:
+            # 配图属增强能力，任何异常都不应影响后续文本发送。
+            logger.warning(f"[主动消息] 发送主动消息配图时出现异常喵: {e!r}")
+
         if should_send_text:
             enable_seg = seg_conf.get("enable", False)
             threshold = seg_conf.get("words_count_threshold", 150)
