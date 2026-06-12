@@ -79,6 +79,10 @@ class StorageMixin:
             "last_schedule_min_interval_seconds",
             "last_schedule_max_interval_seconds",
             "last_schedule_random_interval_seconds",
+            "last_schedule_strategy",
+            "last_schedule_reason",
+            "last_schedule_rule",
+            "last_schedule_source",
         ]:
             if key not in incoming:
                 continue
@@ -104,6 +108,10 @@ class StorageMixin:
                 "last_schedule_min_interval_seconds",
                 "last_schedule_max_interval_seconds",
                 "last_schedule_random_interval_seconds",
+                "last_schedule_strategy",
+                "last_schedule_reason",
+                "last_schedule_rule",
+                "last_schedule_source",
             }:
                 base_scheduled_at = merged.get("last_scheduled_at")
                 incoming_scheduled_at = incoming.get("last_scheduled_at")

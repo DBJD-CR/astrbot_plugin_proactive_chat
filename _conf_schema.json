@@ -121,6 +121,34 @@
                             "step": 30
                         }
                     },
+                    "enable_contextual_timing": {
+                        "description": "启用语境触发时间预测",
+                        "type": "bool",
+                        "default": true,
+                        "hint": "开启后优先调用 LLM 判断最近消息中的时间语境，并据此调整下一次触发时间；LLM 不可用或没有明确判断时仍使用规则兜底和随机区间"
+                    },
+                    "contextual_timing_history_count": {
+                        "description": "语境预测读取消息条数",
+                        "type": "int",
+                        "default": 8,
+                        "hint": "用于判断下一次触发时间的最近消息条数。数值越大越容易参考更早的上下文，但也可能引入无关内容",
+                        "slider": {
+                            "min": 1,
+                            "max": 30,
+                            "step": 1
+                        }
+                    },
+                    "contextual_timing_llm_timeout_seconds": {
+                        "description": "语境预测 LLM 超时 (秒)",
+                        "type": "int",
+                        "default": 15,
+                        "hint": "调用 LLM 判断下一次触发时间时的最长等待秒数。超时后会自动回退到规则判断和随机区间",
+                        "slider": {
+                            "min": 3,
+                            "max": 60,
+                            "step": 1
+                        }
+                    },
                     "quiet_hours": {
                         "description": "免打扰时段 (24小时制)",
                         "type": "string",
@@ -396,6 +424,34 @@
                             "min": 1,
                             "max": 2880,
                             "step": 30
+                        }
+                    },
+                    "enable_contextual_timing": {
+                        "description": "启用语境触发时间预测",
+                        "type": "bool",
+                        "default": true,
+                        "hint": "开启后优先调用 LLM 判断最近消息中的时间语境，并据此调整下一次触发时间；LLM 不可用或没有明确判断时仍使用规则兜底和随机区间"
+                    },
+                    "contextual_timing_history_count": {
+                        "description": "语境预测读取消息条数",
+                        "type": "int",
+                        "default": 8,
+                        "hint": "用于判断下一次触发时间的最近消息条数。数值越大越容易参考更早的上下文，但也可能引入无关内容",
+                        "slider": {
+                            "min": 1,
+                            "max": 30,
+                            "step": 1
+                        }
+                    },
+                    "contextual_timing_llm_timeout_seconds": {
+                        "description": "语境预测 LLM 超时 (秒)",
+                        "type": "int",
+                        "default": 15,
+                        "hint": "调用 LLM 判断下一次触发时间时的最长等待秒数。超时后会自动回退到规则判断和随机区间",
+                        "slider": {
+                            "min": 3,
+                            "max": 60,
+                            "step": 1
                         }
                     },
                     "quiet_hours": {

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import random
 import time
 from datetime import datetime
 from typing import Any
@@ -88,6 +87,15 @@ class ProactiveCoreMixin:
         )
         session_config = None
         scheduled_job_payload = None
+        scheduled_plan = None
+
+        if is_private_session:
+            session_config = self._get_session_config(session_id)
+            if session_config:
+                scheduled_plan = await self._build_next_schedule_plan(
+                    session_id,
+                    session_config,
+                )
 
         async with self.data_lock:
             # 更新未回复计数器
@@ -100,34 +108,11 @@ class ProactiveCoreMixin:
                 f"[主动消息] {self._get_session_log_str(session_id)} 的第 {new_unanswered_count} 次主动消息已发送完成，当前未回复次数: {new_unanswered_count} 次喵。"
             )
 
-            # 私聊任务：锁内仅计算调度参数并写入持久化字段，避免在持锁期间操作调度器。
-            if is_private_session:
-                session_config = self._get_session_config(session_id)
-                if not session_config:
-                    return
-
-                schedule_conf = session_config.get("schedule_settings", {})
-                min_interval = int(schedule_conf.get("min_interval_minutes", 30)) * 60
-                max_interval = max(
-                    min_interval,
-                    int(schedule_conf.get("max_interval_minutes", 900)) * 60,
-                )
-                # 私聊采用配置区间内随机间隔，减少触发规律性
-                random_interval = random.randint(min_interval, max_interval)
-                scheduled_at = time.time()
-                next_trigger_time = scheduled_at + random_interval
-                run_date = datetime.fromtimestamp(next_trigger_time, tz=self.timezone)
-
+            if is_private_session and scheduled_plan:
                 session_payload = self.session_data.setdefault(session_id, {})
-                session_payload["next_trigger_time"] = next_trigger_time
-                session_payload["last_scheduled_at"] = scheduled_at
-                session_payload["last_schedule_min_interval_seconds"] = min_interval
-                session_payload["last_schedule_max_interval_seconds"] = max_interval
-                session_payload["last_schedule_random_interval_seconds"] = (
-                    random_interval
-                )
+                self._write_schedule_plan_to_session(session_payload, scheduled_plan)
                 scheduled_job_payload = {
-                    "run_date": run_date,
+                    "run_date": scheduled_plan["run_date"],
                     "session_config": session_config,
                 }
 

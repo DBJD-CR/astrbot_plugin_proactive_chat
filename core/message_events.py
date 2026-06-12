@@ -19,6 +19,51 @@ class EventsMixin:
     first_message_logged: set[str]
     scheduler: Any
 
+    def _extract_event_text(self, event: AstrMessageEvent) -> str:
+        """提取一条事件中的纯文本，供语境调度临时判断使用。"""
+        candidates: list[Any] = []
+        for attr in ("message_str", "raw_message"):
+            value = getattr(event, attr, None)
+            if value:
+                candidates.append(value)
+
+        message_obj = getattr(event, "message_obj", None)
+        if message_obj:
+            for attr in ("message_str", "raw_message"):
+                value = getattr(message_obj, attr, None)
+                if value:
+                    candidates.append(value)
+
+        try:
+            messages = event.get_messages()
+        except Exception:
+            messages = []
+        if messages:
+            extractor = getattr(self, "_extract_platform_message_text", None)
+            if callable(extractor):
+                for item in messages:
+                    try:
+                        extracted = extractor(item)
+                        if extracted:
+                            candidates.append(extracted)
+                    except Exception:
+                        pass
+            parts: list[str] = []
+            for item in messages:
+                text = getattr(item, "text", None)
+                if text:
+                    parts.append(str(text))
+                elif isinstance(item, str):
+                    parts.append(item)
+            if parts:
+                candidates.append("".join(parts))
+
+        for item in candidates:
+            text = " ".join(str(item or "").split())
+            if text:
+                return text[:500]
+        return ""
+
     async def on_friend_message(self, event: AstrMessageEvent):
         """监听私聊消息，取消旧任务，并重置计时器和计数器。"""
         # 没有消息内容则无需处理
@@ -39,8 +84,13 @@ class EventsMixin:
         # 更新消息时间（仅插件启动后用于自动触发）
         current_time = time.time()
         self.last_message_times[normalized_session_id] = current_time
+        last_user_text = self._extract_event_text(event)
 
         async with self.data_lock:
+            temp_state = self.session_temp_state.setdefault(normalized_session_id, {})
+            temp_state["last_user_text"] = last_user_text
+            temp_state["last_user_time"] = current_time
+
             # 合并旧键数据
             # 将旧键数据迁移到规范化键，保持计数与 self_id 连续
             if normalized_session_id != session_id and session_id in self.session_data:
@@ -158,8 +208,10 @@ class EventsMixin:
 
         # 记录群聊最近用户活跃时间（用于临时态超时清理）
         current_time = time.time()
+        last_user_text = self._extract_event_text(event)
         self.session_temp_state[normalized_session_id] = {
-            "last_user_time": current_time
+            "last_user_time": current_time,
+            "last_user_text": last_user_text,
         }
         logger.debug(
             f"[主动消息] 记录 {self._get_session_log_str(session_id)} 的消息时间戳喵: {current_time}"

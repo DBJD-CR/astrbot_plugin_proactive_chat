@@ -10,6 +10,8 @@ from typing import Any
 
 from astrbot.api import logger
 
+from .contextual_scheduler import ContextualSchedulePlanner
+
 
 class SchedulerMixin:
     """调度与计时相关的混入类。"""
@@ -158,6 +160,10 @@ class SchedulerMixin:
             "last_schedule_min_interval_seconds",
             "last_schedule_max_interval_seconds",
             "last_schedule_random_interval_seconds",
+            "last_schedule_strategy",
+            "last_schedule_reason",
+            "last_schedule_rule",
+            "last_schedule_source",
         }
 
         changed = False
@@ -169,6 +175,40 @@ class SchedulerMixin:
                 changed = True
 
         return changed
+
+    async def _build_next_schedule_plan(
+        self,
+        session_id: str,
+        session_config: dict,
+    ) -> dict[str, Any]:
+        return await ContextualSchedulePlanner(self).build_plan(
+            session_id,
+            session_config,
+        )
+
+    def _write_schedule_plan_to_session(
+        self,
+        session_payload: dict,
+        plan: dict[str, Any],
+        *,
+        include_next_trigger: bool = True,
+    ) -> None:
+        if include_next_trigger:
+            session_payload["next_trigger_time"] = plan["next_trigger_time"]
+        session_payload["last_scheduled_at"] = plan["scheduled_at"]
+        session_payload["last_schedule_min_interval_seconds"] = plan[
+            "min_interval_seconds"
+        ]
+        session_payload["last_schedule_max_interval_seconds"] = plan[
+            "max_interval_seconds"
+        ]
+        session_payload["last_schedule_random_interval_seconds"] = plan[
+            "interval_seconds"
+        ]
+        session_payload["last_schedule_strategy"] = plan.get("strategy", "random")
+        session_payload["last_schedule_reason"] = plan.get("reason", "")
+        session_payload["last_schedule_rule"] = plan.get("rule", "")
+        session_payload["last_schedule_source"] = plan.get("source", "")
 
     def _purge_related_jobs(self, session_id: str) -> None:
         """清理同一目标但不同 UMO 的调度任务，防止幽灵任务。"""
@@ -475,7 +515,10 @@ class SchedulerMixin:
         if not session_config:
             return
 
-        schedule_conf = session_config.get("schedule_settings", {})
+        plan = await self._build_next_schedule_plan(
+            normalized_session_id,
+            session_config,
+        )
 
         async with self.data_lock:
             # 如果存在非规范化的旧键，迁移到规范化键
@@ -500,14 +543,7 @@ class SchedulerMixin:
                 ] = 0
 
             # 计算随机触发时间
-            min_interval = int(schedule_conf.get("min_interval_minutes", 30)) * 60
-            max_interval = max(
-                min_interval, int(schedule_conf.get("max_interval_minutes", 900)) * 60
-            )
-            random_interval = random.randint(min_interval, max_interval)
-            scheduled_at = time.time()
-            next_trigger_time = scheduled_at + random_interval
-            run_date = datetime.fromtimestamp(next_trigger_time, tz=self.timezone)
+            run_date = plan["run_date"]
 
             # 更新调度器与持久化数据
             # 先清理同目标历史任务，再写入新任务，确保同一目标仅一条生效
@@ -523,11 +559,7 @@ class SchedulerMixin:
             )
 
             session_payload = self.session_data.setdefault(normalized_session_id, {})
-            session_payload["next_trigger_time"] = next_trigger_time
-            session_payload["last_scheduled_at"] = scheduled_at
-            session_payload["last_schedule_min_interval_seconds"] = min_interval
-            session_payload["last_schedule_max_interval_seconds"] = max_interval
-            session_payload["last_schedule_random_interval_seconds"] = random_interval
+            self._write_schedule_plan_to_session(session_payload, plan)
             logger.info(
                 f"[主动消息] 已为 {self._get_session_log_str(normalized_session_id, session_config)} 安排下一次主动消息喵，时间：{run_date.strftime('%Y-%m-%d %H:%M:%S')} 喵。"
             )
