@@ -191,6 +191,20 @@ class SchedulerMixin:
                 except Exception:
                     pass
 
+    def _add_chat_job(self, session_id: str, run_date: datetime) -> None:
+        """规范化 session_id，清理同目标历史任务，并注册一个新的 check_and_chat 定时 job。"""
+        normalized = self._normalize_session_id(session_id)
+        self._purge_related_jobs(normalized)
+        self.scheduler.add_job(
+            self.check_and_chat,
+            "date",
+            run_date=run_date,
+            args=[normalized],
+            id=normalized,
+            replace_existing=True,
+            misfire_grace_time=60,
+        )
+
     def _has_related_persisted_task(self, session_id: str) -> bool:
         """判断同一目标是否存在仍可恢复的持久化任务（避免重复触发）。"""
         parsed = self._parse_session_id(session_id)
@@ -429,15 +443,7 @@ class SchedulerMixin:
                     )
                     continue
 
-                self.scheduler.add_job(
-                    self.check_and_chat,
-                    "date",
-                    run_date=run_date,
-                    args=[session_id],
-                    id=session_id,
-                    replace_existing=True,
-                    misfire_grace_time=60,
-                )
+                self._add_chat_job(session_id, run_date)
                 logger.info(
                     f"[主动消息] 已成功从文件恢复任务喵: {self._get_session_log_str(session_id, session_config)}, 执行时间: {run_date} 喵"
                 )
@@ -511,16 +517,7 @@ class SchedulerMixin:
 
             # 更新调度器与持久化数据
             # 先清理同目标历史任务，再写入新任务，确保同一目标仅一条生效
-            self._purge_related_jobs(normalized_session_id)
-            self.scheduler.add_job(
-                self.check_and_chat,
-                "date",
-                run_date=run_date,
-                args=[normalized_session_id],
-                id=normalized_session_id,
-                replace_existing=True,
-                misfire_grace_time=60,
-            )
+            self._add_chat_job(normalized_session_id, run_date)
 
             session_payload = self.session_data.setdefault(normalized_session_id, {})
             session_payload["next_trigger_time"] = next_trigger_time
@@ -619,7 +616,8 @@ class SchedulerMixin:
 
                 # 自动触发生成的任务虽然不持久化到磁盘，但仍需补齐运行时元信息，
                 # 以便 Web 管理端能够正确计算倒计时进度，而不是误判为满进度。
-                session_payload = self.session_data.setdefault(session_id, {})
+                normalized_for_job = self._normalize_session_id(session_id)
+                session_payload = self.session_data.setdefault(normalized_for_job, {})
                 session_payload["last_scheduled_at"] = scheduled_at
                 session_payload["last_schedule_min_interval_seconds"] = min_interval
                 session_payload["last_schedule_max_interval_seconds"] = max_interval
@@ -627,15 +625,7 @@ class SchedulerMixin:
                     random_interval
                 )
 
-                self.scheduler.add_job(
-                    self.check_and_chat,
-                    "date",
-                    run_date=run_date,
-                    args=[session_id],
-                    id=session_id,
-                    replace_existing=True,
-                    misfire_grace_time=60,
-                )
+                self._add_chat_job(normalized_for_job, run_date)
 
                 logger.info(
                     f"[主动消息] {self._get_session_log_str(session_id, current_config)} 满足条件，自动触发任务已创建喵！执行时间 (非持久化): {run_date.strftime('%Y-%m-%d %H:%M:%S')} 喵"

@@ -152,6 +152,22 @@ class LifecycleMixin:
     async def terminate(self) -> None:
         """插件被卸载或停用时调用的清理函数。"""
         logger.info("[主动消息] 收到插件终止指令，开始清理资源喵。")
+        # 调度器关闭优先于其它清理：必须最先、且独立 try 执行，
+        # 避免遥测/计时器等任意一步抛异常时跳过 shutdown，导致旧 scheduler 残留在后台继续触发任务。
+        if getattr(self, "scheduler", None) and self.scheduler.running:
+            try:
+                jobs = self.scheduler.get_jobs()
+                logger.info(f"[主动消息] 正在清理调度器任务喵，数量: {len(jobs)}")
+                for job in jobs:
+                    try:
+                        self.scheduler.remove_job(job.id)
+                        logger.debug(f"[主动消息] 已移除调度器任务喵: {job.id}")
+                    except Exception as e:
+                        logger.warning(f"[主动消息] 移除调度器任务时出错喵: {e}")
+                self.scheduler.shutdown(wait=False)
+                logger.info("[主动消息] 调度器已关闭喵。")
+            except Exception as e:
+                logger.error(f"[主动消息] 关闭调度器时出错喵: {e}")
         try:
             if self._heartbeat_task:
                 self._heartbeat_task.cancel()
@@ -210,23 +226,6 @@ class LifecycleMixin:
 
             self.auto_trigger_timers.clear()
             logger.info(f"[主动消息] 已取消 {auto_trigger_count} 个自动触发计时器喵。")
-
-            # 清理调度器任务（逐个移除后再 shutdown，便于日志定位）
-            if self.scheduler and self.scheduler.running:
-                try:
-                    jobs = self.scheduler.get_jobs()
-                    logger.info(f"[主动消息] 正在清理调度器任务喵，数量: {len(jobs)}")
-                    for job in jobs:
-                        try:
-                            self.scheduler.remove_job(job.id)
-                            logger.debug(f"[主动消息] 已移除调度器任务喵: {job.id}")
-                        except Exception as e:
-                            logger.warning(f"[主动消息] 移除调度器任务时出错喵: {e}")
-
-                    self.scheduler.shutdown()
-                    logger.info("[主动消息] 调度器已关闭喵。")
-                except Exception as e:
-                    logger.error(f"[主动消息] 关闭调度器时出错喵: {e}")
 
             # 终止前最后一次持久化，尽量保留当前会话状态
             if self.data_lock:

@@ -90,6 +90,9 @@ class ProactiveChatPlugin(
         self._start_time: float = 0.0
         # 保存原 asyncio 全局异常处理器，以便插件卸载时恢复原状。
         self._original_exception_handler = None
+        # 标记是否接管过全局异常处理器；必须在 __init__ 初始化，
+        # 否则遥测关闭时 terminate 访问该属性会抛 AttributeError，导致后续清理（含调度器关闭）全部中断。
+        self._exception_handler_installed = False
 
         # 群聊沉默倒计时与自动触发计时器
         self.group_timers: dict[str, asyncio.TimerHandle] = {}

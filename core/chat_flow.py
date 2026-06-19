@@ -82,7 +82,10 @@ class ProactiveCoreMixin:
             logger.error(f"[主动消息] 存档对话历史失败喵: {e}")
             logger.warning("[主动消息] 对话存档失败喵，但会继续执行后续步骤喵。")
 
-        parsed = self._parse_session_id(session_id)
+        # 提前规范化：session_data 写入与 scheduler job 必须使用同一个 key，
+        # 否则 check_and_chat 用 normalized key 读 unanswered_count 时永远得到 0。
+        normalized_session_id = self._normalize_session_id(session_id)
+        parsed = self._parse_session_id(normalized_session_id)
         is_private_session = parsed and (
             "Friend" in parsed[1] or "Private" in parsed[1]
         )
@@ -93,16 +96,16 @@ class ProactiveCoreMixin:
             # 更新未回复计数器
             # 每次主动发送成功后，未回复次数 +1
             new_unanswered_count = unanswered_count + 1
-            self.session_data.setdefault(session_id, {})["unanswered_count"] = (
+            self.session_data.setdefault(normalized_session_id, {})["unanswered_count"] = (
                 new_unanswered_count
             )
             logger.info(
-                f"[主动消息] {self._get_session_log_str(session_id)} 的第 {new_unanswered_count} 次主动消息已发送完成，当前未回复次数: {new_unanswered_count} 次喵。"
+                f"[主动消息] {self._get_session_log_str(normalized_session_id)} 的第 {new_unanswered_count} 次主动消息已发送完成，当前未回复次数: {new_unanswered_count} 次喵。"
             )
 
             # 私聊任务：锁内仅计算调度参数并写入持久化字段，避免在持锁期间操作调度器。
             if is_private_session:
-                session_config = self._get_session_config(session_id)
+                session_config = self._get_session_config(normalized_session_id)
                 if not session_config:
                     return
 
@@ -118,7 +121,7 @@ class ProactiveCoreMixin:
                 next_trigger_time = scheduled_at + random_interval
                 run_date = datetime.fromtimestamp(next_trigger_time, tz=self.timezone)
 
-                session_payload = self.session_data.setdefault(session_id, {})
+                session_payload = self.session_data.setdefault(normalized_session_id, {})
                 session_payload["next_trigger_time"] = next_trigger_time
                 session_payload["last_scheduled_at"] = scheduled_at
                 session_payload["last_schedule_min_interval_seconds"] = min_interval
@@ -134,17 +137,9 @@ class ProactiveCoreMixin:
             await self._save_data_internal()
 
         if scheduled_job_payload is not None:
-            self.scheduler.add_job(
-                self.check_and_chat,
-                "date",
-                run_date=scheduled_job_payload["run_date"],
-                args=[session_id],
-                id=session_id,
-                replace_existing=True,
-                misfire_grace_time=60,
-            )
+            self._add_chat_job(normalized_session_id, scheduled_job_payload["run_date"])
             logger.info(
-                f"[主动消息] 已为 {self._get_session_log_str(session_id, scheduled_job_payload['session_config'])} 安排下一次主动消息喵，时间：{scheduled_job_payload['run_date'].strftime('%Y-%m-%d %H:%M:%S')} 喵。"
+                f"[主动消息] 已为 {self._get_session_log_str(normalized_session_id, scheduled_job_payload['session_config'])} 安排下一次主动消息喵，时间：{scheduled_job_payload['run_date'].strftime('%Y-%m-%d %H:%M:%S')} 喵。"
             )
 
     async def check_and_chat(self, session_id: str) -> None:
@@ -178,6 +173,7 @@ class ProactiveCoreMixin:
                 return
 
             schedule_conf = session_config.get("schedule_settings", {})
+
 
             # 未回复次数上限检查
             async with self.data_lock:
