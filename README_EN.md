@@ -1736,4 +1736,4 @@ This plugin is licensed under AGPL v3.0, which means:
 
 ## <span id="star">⭐️ Stars</span>
 
-[![Star History Chart](https://api.star-history.com/svg?repos=DBJD-CR/astrbot_plugin_proactive_chat&type=Date)](https://www.star-history.com/#DBJD-CR/astrbot_plugin_proactive_chat&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=DBJD-CR/astrbot_plugin_proactive_chat&type=Date)](https://star-history.dera.page/#DBJD-CR/astrbot_plugin_proactive_chat&Date)

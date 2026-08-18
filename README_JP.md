@@ -1738,4 +1738,4 @@ GNU Affero General Public License v3.0 — 詳細は [LICENSE](LICENSE) を参�
 
 ## <span id="star">⭐️ Star</span>
 
-[![Star History Chart](https://api.star-history.com/svg?repos=DBJD-CR/astrbot_plugin_proactive_chat&type=Date)](https://www.star-history.com/#DBJD-CR/astrbot_plugin_proactive_chat&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=DBJD-CR/astrbot_plugin_proactive_chat&type=Date)](https://star-history.dera.page/#DBJD-CR/astrbot_plugin_proactive_chat&Date)
