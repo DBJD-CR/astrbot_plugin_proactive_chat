@@ -5,6 +5,31 @@
 <!-- markdownlint-disable MD041 -->
 # ChangeLog
 
+# 2026/08/30 v1.2.5
+
+Hi，好久不见。我想说的是我们还没有跑路 :)
+
+本版本中主要更新并迁移了通知与遥测的端点（大概可以解决控制台一直刷警告信息的问题）并简单修订和完善了文档。
+
+我们预计在九月中下旬将带来一波大的新功能和改进，敬请期待！
+
+## 🚀 What's Changed
+
+### 🌐 Data Sources & Network (数据源与网络)
+
+- 迁移遥测与通知中心至新域名 by @DBJD-CR & Aloys233 in #98
+
+### 📚 Documentation (文档)
+
+- 更新适用于 v1.2.5 的 README 文档、贡献指南和更新日志 by @DBJD-CR in #98
+
+---
+
+**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.2.4...v1.2.5
+
+<details>
+<summary>点击查看历史更新记录 (History)</summary>
+
 # 2026/05/29 v1.2.4
 
 ## 🚀 What's Changed
@@ -36,8 +61,7 @@
 
 **Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.2.3...v1.2.4
 
-<details>
-<summary>点击查看历史更新记录 (History)</summary>
+---
 
 # 2026/05/06 v1.2.3
 
