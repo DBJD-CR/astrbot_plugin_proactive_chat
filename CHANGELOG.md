@@ -1,5 +1,6 @@
 <!-- markdownlint-disable MD024 -->
 <!-- markdownlint-disable MD025 -->
+<!-- markdownlint-disable MD028 -->
 <!-- markdownlint-disable MD033 -->
 <!-- markdownlint-disable MD034 -->
 <!-- markdownlint-disable MD041 -->
@@ -25,7 +26,7 @@ Hi，好久不见。我想说的是我们还没有跑路 :)
 
 ---
 
-**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.2.4...v1.2.5
+**Full Changelog**: https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/compare/v1.2.4...v1.2.5
 
 <details>
 <summary>点击查看历史更新记录 (History)</summary>
@@ -59,7 +60,7 @@ Hi，好久不见。我想说的是我们还没有跑路 :)
 
 - @Ayleovelle made their first contribution in #71
 
-**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.2.3...v1.2.4
+**Full Changelog**: https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/compare/v1.2.3...v1.2.4
 
 ---
 
@@ -101,7 +102,7 @@ Hi，好久不见。我想说的是我们还没有跑路 :)
 
 - @Sisyphbaous-DT-Project made their first contribution in #59
 
-**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.2.2...v1.2.3
+**Full Changelog**: https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/compare/v1.2.2...v1.2.3
 
 ---
 
@@ -116,7 +117,7 @@ Hi，好久不见。我想说的是我们还没有跑路 :)
 
 ---
 
-**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.2.1...v1.2.2
+**Full Changelog**: https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/compare/v1.2.1...v1.2.2
 
 ---
 
@@ -143,7 +144,7 @@ Hi，好久不见。我想说的是我们还没有跑路 :)
 
 ---
 
-**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.2.0...v1.2.1
+**Full Changelog**: https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/compare/v1.2.0...v1.2.1
 
 ---
 
@@ -222,7 +223,7 @@ Hi，好久不见。我想说的是我们还没有跑路 :)
 - @codex made their first contribution in #43
 - @Alaye-Dong made their first contribution in #47
 
-**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.1.5...v1.2.0
+**Full Changelog**: https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/compare/v1.1.5...v1.2.0
 
 ---
 
@@ -251,7 +252,7 @@ Hi，好久不见。我想说的是我们还没有跑路 :)
 - 修订 README 文档与更新日志
 - Issue/PR 模板微调
 
-**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.1.4...v1.1.5
+**Full Changelog**: https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/compare/v1.1.4...v1.1.5
 
 # 2026/01/22 v1.1.4
 
@@ -267,7 +268,7 @@ Hi，好久不见。我想说的是我们还没有跑路 :)
 > [!TIP]
 > 如果遇到你期望之外的 Bot 给你发送主动消息，并且插件无法自行更正，请尝试删除插件生成的持久化数据（不影响你在插件中的配置项），然后和你想要发送主动消息的那个 Bot 重新聊一下。
 
-**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.1.3...v1.1.4
+**Full Changelog**: https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/compare/v1.1.3...v1.1.4
 
 ---
 
@@ -291,7 +292,7 @@ Hi，好久不见。我想说的是我们还没有跑路 :)
 
 - @dosu-ai made their first contribution in #19
 
-**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.1.2...v1.1.3
+**Full Changelog**: https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/compare/v1.1.2...v1.1.3
 
 ---
 
@@ -317,7 +318,7 @@ Hi，好久不见。我想说的是我们还没有跑路 :)
 - @NickWoluff made their first contribution in #16
 - @sourcery-ai made their first contribution in #17
 
-**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.1.0...v1.1.2
+**Full Changelog**: https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/compare/v1.1.0...v1.1.2
 
 ---
 
@@ -335,7 +336,7 @@ Hi，好久不见。我想说的是我们还没有跑路 :)
 
 ---
 
-**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.0.2...v1.1.0
+**Full Changelog**: https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/compare/v1.0.2...v1.1.0
 
 ---
 
@@ -354,7 +355,7 @@ Hi，好久不见。我想说的是我们还没有跑路 :)
 
 ---
 
-**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.0.1...v1.0.2
+**Full Changelog**: https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/compare/v1.0.1...v1.0.2
 
 ---
 
@@ -374,7 +375,7 @@ Hi，好久不见。我想说的是我们还没有跑路 :)
 
 - **增强异常处理**: 优化了内部任务调度逻辑的异常捕获机制，提升了插件在边缘情况下的健壮性
 
-**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v1.0.0...v1.0.1
+**Full Changelog**: https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/compare/v1.0.0...v1.0.1
 
 ---
 
@@ -405,7 +406,7 @@ Hi，好久不见。我想说的是我们还没有跑路 :)
 
 保持警觉，不放过未来任何新版本更新的相关资讯！
 
-**Full Changelog**: https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/compare/v0.9.97...v1.0.0
+**Full Changelog**: https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/compare/v0.9.97...v1.0.0
 
 ---
 
