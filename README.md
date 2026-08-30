@@ -3,7 +3,7 @@
 <!-- markdownlint-disable MD033 -->
 <!-- markdownlint-disable MD041 -->
 
-![astrbot_plugin_proactive_chat](https://socialify.git.ci/DBJD-CR/astrbot_plugin_proactive_chat/image?custom_description=%F0%9F%92%96+%E8%AE%A9%E4%BD%A0%E7%9A%84+Bot+%E6%8B%A5%E6%9C%89%E4%B8%BB%E5%8A%A8%E5%85%B3%E6%80%80%E7%9A%84%E7%81%B5%E9%AD%82&description=1&font=Inter&forks=1&issues=1&language=1&name=1&owner=1&pattern=Formal+Invitation&pulls=1&stargazers=1&theme=Auto)
+![astrbot_plugin_proactive_chat](https://socialify.git.ci/Pancakes-Labs/astrbot_plugin_proactive_chat/image?custom_description=%F0%9F%92%96+%E8%AE%A9%E4%BD%A0%E7%9A%84+Bot+%E6%8B%A5%E6%9C%89%E4%B8%BB%E5%8A%A8%E5%85%B3%E6%80%80%E7%9A%84%E7%81%B5%E9%AD%82&description=1&font=Inter&forks=1&issues=1&language=1&name=1&owner=1&pattern=Formal+Invitation&pulls=1&stargazers=1&theme=Auto)
 
 <div align="center">
 
@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/AstrBot-v4.23.6%20Compatible-brightgreen.svg" alt="Compatible with AstrBot v4.23.6">
+  <img src="https://img.shields.io/badge/AstrBot-v4.27.4%20Compatible-brightgreen.svg" alt="Compatible with AstrBot v4.27.4">
   <img src="https://img.shields.io/github/v/release/DBJD-CR/astrbot_plugin_proactive_chat?label=Release&color=brightgreen" alt="Latest Release">
   <img src="https://img.shields.io/badge/QQ群-1033089808-12B7F3.svg" alt="QQ群">
 </p>
@@ -128,9 +128,9 @@
 > [!TIP]
 > 本项目的相关开发数据 (持续更新中)：
 >
-> 开发时长：累计 63 天（主插件部分）
+> 开发时长：累计 64 天（主插件部分）
 >
-> 累计工时：约 310 小时（主插件部分）
+> 累计工时：约 313 小时（主插件部分）
 >
 > 使用的大模型：Gemini-2.5-Pro、Kimi For Coding、Gemini-3.0 Flash/Pro、GPT-5.3 & 5.4-Codex & 5.5 (With RooCode in VSCode)
 >
@@ -166,7 +166,7 @@
 
 ## 🚀 安装与使用
 
-1. **下载插件**: 通过 AstrBot 的插件市场下载。或从本 GitHub 仓库的 Release 下载 `astrbot_plugin_proactive_chat` 的 `.zip` 文件，在 AstrBot WebUI 中的插件页面中选择 `从文件安装` 。
+1. **下载插件**: 通过 AstrBot 的插件市场下载。或从本 GitHub 仓库的 Release 下载 `astrbot_plugin_proactive_chat` 的 `.zip` 文件，在 AstrBot WebUI 中的插件页面右下角的 `➕` 选择 `从文件安装` 。
 2. **安装依赖**: 本插件的核心依赖大多已包含在 AstrBot 的默认依赖中，且在插件下载安装时会自动安装插件所需的依赖，通常无需额外安装。如果你的环境中确实缺少相关依赖，请安装：
 
     ```bash
@@ -176,8 +176,49 @@
     ```
 
 3. **重启 AstrBot (可选)**: 如果插件没有正常加载或生效，可以尝试重启你的 AstrBot 程序。
-4. **配置插件**: 进入 WebUI，找到 `主动消息` 插件，选择 `插件配置` 选项，填写会话 UMO 列表和其他个性化配置。
+4. **配置插件**: 进入 AstrBot WebUI，找到 `主动消息` 插件，选择 `插件配置` 选项，填写 `会话 UMO 列表` 和其他个性化配置。或者在插件自带的 WebUI 中进行配置。
 5. **开始使用**: 保存配置后，等待 Bot 主动带给你的惊喜吧~
+
+### 📬 推送会话列表
+
+现在，距离 bot 开始发消息还有最后一步：正确填写需要推送的会话格式。如果你遇到了配置问题，请根据下方的流程指引完成：
+
+1. 找到你需要发送主动消息的会话，@ 你的 bot（如果是私聊就直接发），发送一条 `/sid` 的指令（如果你修改了 AstrBot 的配置文件 → 平台配置 → 唤醒词，请把 `/` 改为你自定义的唤醒词）。
+2. 等待 bot 回复后，将给出的 UMO 填入插件对应配置项。回复格式类似于：
+
+```text
+UMO: 「default:GroupMessage:123456789」
+UID: 「987654321」
+*Use UMO to set whitelist and configure routing, use UID to set admin list(UMO 可用于设置白名单和配置文件路由，UID 可用于设置管理员列表)
+
+Your session information:
+Bot ID: 「default」
+Message Type: 「GroupMessage」
+Session ID: 「123456789」
+```
+
+> [!WARNING]
+> 请注意，你应该填写的部分是 `「」` 内的内容，即 `default:GroupMessage:123456789`，请不要把整串回复内容填进去然后来问我为什么不发消息了。
+>
+> 更不要照抄这里的示例或者是配置描述，一切情况以你自己实际为准。
+
+如果是 QQ 官方机器人，类似于：
+
+```text
+UMO: 「default:GroupMessage:4C011A2B3D4C5E6F9F8E7D6C5B4A3210」
+UID: 「4C011A2B3D4C5E6F9F8E7D6C5B4A3210」
+*Use UMO to set whitelist and configure routing, use UID to set admin list(UMO 可用于设置白名单和配置文件路由，UID 可用于设置管理员列表)
+Your session information:
+Bot ID: 「default」
+Message Type: 「GroupMessage」
+Session ID: 「4C011A2B3D4C5E6F9F8E7D6C5B4A3210」
+The group's ID: 「7E933A67F5C0AD0A128A199EFCE140B4」. Set this ID to whitelist to allow the entire group.
+```
+
+- 私聊推送请填 UMO 的部分，即 `default:FriendMessage:4C011A2B3D4C5E6F9F8E7D6C5B4A3210`。
+- 群聊推送请用 `The group's ID` 替换掉 `UID` 的部分，即填写 `default:GroupMessage:7E933A67F5C0AD0A128A199EFCE140B4`。
+
+其他平台配置流程基本类似。完成后重载插件即可开始发送主动消息。
 
 ## 💻 现代化 WebUI 控制台
 
@@ -218,7 +259,7 @@
 | 个人微信 | ❓ | v4.22.0+ | 未提供准确说明 | ❓ 等待社区反馈 (但根据过往经验或许可用) |
 | 飞书 | ✅ | v4.15.0+ | 主动消息推送：支持 | ✅ 社区反馈可用 |
 | 钉钉 | ✅ | v4.15.0+ | 主动消息推送：支持 | ❓ 等待社区反馈 |
-| Telegram | ✅ | v4.15.0+ | 主动消息推送：支持 | ❓ 等待社区反馈 |
+| Telegram | ✅ | v4.15.0+ | 主动消息推送：支持 | ✅ 社区反馈可用 |
 | LINE | ✅ | v4.17.0+ | 主动消息推送：支持 | ❓ 等待社区反馈 |
 | Slack | ❓ | v4.8.0+ | 未提供说明 | ❓ 等待社区反馈 |
 | Misskey | ❓ | v4.8.0+ | 未提供说明 | ❓ 等待社区反馈 |
@@ -231,7 +272,6 @@
 | 其他平台 | ❓ | v4.8.0+ | - | ❓ 理论上支持所有支持主动消息推送的平台，但未经测试 |
 
 > [!NOTE]
->
 > 使用 QQ 官机时，注意不要像个人号那样填写 QQ 号，应填写 UID，可使用指令 `/sid` 获取，格式类似 `4C011A2B3D4C5E6F9F8E7D6C5B4A3210`。
 >
 > 使用个人微信需要升级到最新的手机微信版本：iOS >= 8.0.70，Android >= 8.0.69，并确保微信中包含 ClawBot 插件。
@@ -844,10 +884,7 @@ PS: 由于我个人本地的测试环境有限，我们非常欢迎分享你在�
 
 常见示例：
 
-- Web 管理端是否启用 `web_admin.enabled`
-- Web 监听地址 `web_admin.host`
-- Web 监听端口 `web_admin.port`
-- Web 鉴权是否开启这一“模式”本身
+- Web 管理端是否启用、监听地址、监听端口
 
 这些配置即使保存成功，也**不一定会立刻改变当前已经启动的 Web 服务行为**。如果你修改了这些参数，最稳妥的做法仍然是：**保存后重载插件**。
 
@@ -1524,7 +1561,7 @@ flowchart LR
 | **v0.9.97** | ✅ 稳定版本 | 单私聊版最后一个稳定版本 | v4.5.2+ |
 | **v0.9.7** | ⚠️ 首个发行版 | 存在较多基础性问题，不推荐下载 | v3.5.19+ |
 
-更多历史版本说明详见更新日志 [CHANGELOG](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/blob/main/CHANGELOG.md)。
+更多历史版本说明详见更新日志 [CHANGELOG](https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/blob/main/CHANGELOG.md)。
 
 ---
 
@@ -1704,8 +1741,9 @@ flowchart LR
 
 我的其他插件：
 
-- [灾害预警(Disaster_Warning)](https://github.com/DBJD-CR/astrbot_plugin_disaster_warning) - 它能让你的 Bot 提供实时的地震、海啸、气象预警信息推送服务。
-- [视奸面板(Live_Dashboard)](https://github.com/DBJD-CR/astrbot_plugin_live_dashboard) - 它能让你的 Bot 和群友可以随时随地视奸你手机和电脑的活动状态。
+- [灾害预警(Disaster_Warning)](https://github.com/Pancakes-Labs/astrbot_plugin_disaster_warning) - 它能让你的 Bot 提供实时的地震、海啸、气象预警信息推送服务。
+- [视奸面板(Live_Dashboard)](https://github.com/Pancakes-Labs/astrbot_plugin_live_dashboard) - 它能让你的 Bot 和群友可以随时随地视奸你手机和电脑的活动状态。
+- [代码统计 (Count_Loc)](https://github.com/Pancakes-Labs/astrbot_plugin_count_loc) - 它能让你的 Bot 对任意公开的 GitHub 或 GitLab 仓库的代码行数、文件数量、注释行数、物理总行数等指标进行快捷获取和分析。
 
 ## 📞 联系我们
 
@@ -1718,7 +1756,7 @@ flowchart LR
 
 ## 🤝 贡献
 
-欢迎提交 [Issue](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/issues) 和 [Pull Request](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/pulls) 来改进这个插件！经历了多个版本的迭代，它终于达到了一个稳定且能用的状态，但依然有很大的提升空间。
+欢迎提交 [Issue](https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/issues) 和 [Pull Request](https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/pulls) 来改进这个插件！经历了多个版本的迭代，它终于达到了一个稳定且能用的状态，但依然有很大的提升空间。
 
 ## 📄 许可证
 
@@ -1736,4 +1774,10 @@ GNU Affero General Public License v3.0 - 详见 [LICENSE](LICENSE) 文件。
 
 ## <span id="star">⭐️ 星星</span>
 
-[![Star History Chart](https://api.star-history.com/svg?repos=DBJD-CR/astrbot_plugin_proactive_chat&type=Date)](https://www.star-history.com/#DBJD-CR/astrbot_plugin_proactive_chat&Date)
+<a href="https://www.star-history.com/?repos=Pancakes-Labs%2Fastrbot_plugin_proactive_chat&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Pancakes-Labs/astrbot_plugin_proactive_chat&type=date&theme=dark&legend=top-left&sealed_token=08VvlnRcQl_2DPmpGSq3y-p3Vy8HhFW8O3RAfoBw9nPkPpfyBXKJ2t93ne6K_qH5Q2Oq2kEzpBspfo3oYmBPT6vIZPACKUMj3kuC-9TVyBUesL6lChuewQ" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Pancakes-Labs/astrbot_plugin_proactive_chat&type=date&legend=top-left&sealed_token=08VvlnRcQl_2DPmpGSq3y-p3Vy8HhFW8O3RAfoBw9nPkPpfyBXKJ2t93ne6K_qH5Q2Oq2kEzpBspfo3oYmBPT6vIZPACKUMj3kuC-9TVyBUesL6lChuewQ" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Pancakes-Labs/astrbot_plugin_proactive_chat&type=date&legend=top-left&sealed_token=08VvlnRcQl_2DPmpGSq3y-p3Vy8HhFW8O3RAfoBw9nPkPpfyBXKJ2t93ne6K_qH5Q2Oq2kEzpBspfo3oYmBPT6vIZPACKUMj3kuC-9TVyBUesL6lChuewQ" />
+ </picture>
+</a>

@@ -28,6 +28,6 @@
     <!-- 指示箭头 -->
     <path d="M15 10 L26 10 L20.5 0 Z" />
     <!-- 排名数字 -->
-    <text x="20.5" y="28" font-size="13" class="text-bold" text-anchor="middle">8</text>
+    <text x="20.5" y="28" font-size="13" class="text-bold" text-anchor="middle">5</text>
   </g>
 </svg>
