@@ -11,26 +11,26 @@
 
 ### 🐛 报告 Bug
 
-如果您在使用过程中发现了 Bug，请通过提交 [**Bug 报告**](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/issues/new?template=bug_report.yml) 来帮助我们。请在提交 Issue 之前：
+如果您在使用过程中发现了 Bug，请通过提交 [**Bug 报告**](https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/issues/new?template=bug_report.yml) 来帮助我们。请在提交 Issue 之前：
 
 1. **搜索现有 Issue**：检查是否已经有人报告过类似的问题。
 2. **更新到最新版本**：确保您使用的是插件的最新版本，问题可能已经在新版本中修复。
 
 ### ✨ 提出功能建议 (Feature)
 
-如果您对插件的未来有任何绝妙的想法，欢迎通过提交 [**功能建议**](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/issues/new?template=feature_request.yml) 来与我们分享。请详细描述您的想法和它的使用场景。
+如果您对插件的未来有任何绝妙的想法，欢迎通过提交 [**功能建议**](https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/issues/new?template=feature_request.yml) 来与我们分享。请详细描述您的想法和它的使用场景。
 
 ### ❓ 使用咨询 / 问题讨论 (Discussion)
 
-如果您暂时不能确定这是否是插件 Bug，或者希望就使用方式、配置思路、兼容性排查等问题先进行讨论，欢迎提交 [**使用咨询 / 问题讨论**](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/issues/new?template=discussion.yml)。
+如果您暂时不能确定这是否是插件 Bug，或者希望就使用方式、配置思路、兼容性排查等问题先进行讨论，欢迎提交 [**使用咨询 / 问题讨论**](https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/issues/new?template=discussion.yml)。
 
 ### 📚 文档改进建议 (Docs)
 
-如果您发现 README、配置说明、接口文档或示例存在错误、缺失或表述不清的问题，欢迎提交 [**文档改进建议**](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/issues/new?template=docs.yml) 帮助我们持续完善文档体验。
+如果您发现 README、配置说明、接口文档或示例存在错误、缺失或表述不清的问题，欢迎提交 [**文档改进建议**](https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/issues/new?template=docs.yml) 帮助我们持续完善文档体验。
 
 ### 🎨 设计 / 交互建议 (Design)
 
-如果您对管理面板、配置流程、提示反馈、信息展示或整体使用体验有改进想法，欢迎提交 [**设计 / 交互建议**](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/issues/new?template=design.yml) 与我们讨论。
+如果您对管理面板、配置流程、提示反馈、信息展示或整体使用体验有改进想法，欢迎提交 [**设计 / 交互建议**](https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/issues/new?template=design.yml) 与我们讨论。
 
 ## 💻 代码贡献
 
@@ -103,7 +103,7 @@
 
 感谢所有为主动消息插件做出任何形式贡献的个人、团体，包括但不限于：
 
-- @Souler: "创世神"，伟大无需多言。感谢他提供了一个这么好的平台，以及对 AstrBot 的持续维护。
+- @Soulter: "创世神"，伟大无需多言。感谢他提供了一个这么好的平台，以及对 AstrBot 的持续维护。
 - @Aloys233: 为本插件提供通知系统、遥测系统等远端服务支持，以及众多日常开发中的便利。
 - @Sisyphbaous-DT-Project: 为主动消息提供了更灵活的上下文来源选择。
 - @Ayleovelle: 优化了 WebUI 加载与依赖相关问题。
