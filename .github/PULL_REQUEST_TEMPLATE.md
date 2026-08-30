@@ -29,4 +29,4 @@
 
 ## ❤️ CONTRIBUTING
 
-- [ ] 🥳 我已阅读并同意遵守该项目的 [贡献指南](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/blob/main/CONTRIBUTING.md) / I have read and agree to abide by the [CONTRIBUTING](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat/blob/main/CONTRIBUTING.md) of this project.
+- [ ] 🥳 我已阅读并同意遵守该项目的 [贡献指南](https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/blob/main/CONTRIBUTING.md) / I have read and agree to abide by the [CONTRIBUTING](https://github.com/Pancakes-Labs/astrbot_plugin_proactive_chat/blob/main/CONTRIBUTING.md) of this project.
