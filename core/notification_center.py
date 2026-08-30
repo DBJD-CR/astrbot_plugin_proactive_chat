@@ -45,9 +45,9 @@ class NotificationCenter:
         }
 
     # 当前通知平台基础地址硬编码，不暴露到用户配置页。
-    NOTIFICATION_BASE_URL = "https://pluginpush.aloys23.link"
+    NOTIFICATION_BASE_URL = "https://plugincenter.aloys23.link"
     # 当前插件对应的 APP_SLUG，同样按常量维护，减少误改风险。
-    NOTIFICATION_APP_SLUG = "1691ddc2-adb1-4fc4-98bc-245162396f77"
+    NOTIFICATION_APP_SLUG = "f1b3592e-be98-4398-a3be-596e4a1ea90f"
 
     def _get_settings(self) -> dict[str, Any]:
         # 只读取 notification_settings 中允许用户调整的轻量项，如启用状态与轮询间隔。

@@ -26,9 +26,9 @@ class TelemetryManager:
     """遥测管理器，负责匿名上报插件运行状态、配置快照与错误信息。"""
 
     # 统一的遥测接收端地址
-    _ENDPOINT = "https://telemetry.aloys233.top/api/ingest"
+    _ENDPOINT = "https://plugincenter.aloys23.link/api/ingest"
     # 当前项目专用的 App Key 以 Base64 形式存放，运行时再解码使用。
-    _ENCODED_APP_KEY = "dGtfODlpS0tBd2VhX3RFVVZSbll2cl9JR3Jld0tsaXhVdzI="
+    _ENCODED_APP_KEY = "dGtfTUlMdzk5NTZ4aGNZTm54RzBzSHZzdFl3VjhnN0YtUmc="
     _APP_KEY = base64.b64decode(_ENCODED_APP_KEY).decode()
     # 插件名用于定位插件私有数据目录，并持久化实例级匿名 ID。
     _PLUGIN_NAME = "astrbot_plugin_proactive_chat"
