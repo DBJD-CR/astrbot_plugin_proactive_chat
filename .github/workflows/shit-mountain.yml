@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: 下载并校验 fuck-u-code（固定 v1.0.0-beta.1）
         run: |

@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: 确保标签颜色正确
         # 仅在非 dry-run 模式下执行，避免预览时报错或产生副作用
@@ -33,7 +33,7 @@ jobs:
         run: |
           gh label create "status/stale" --color "EDEDED" --description "长期无活动的 Issue" || gh label edit "status/stale" --color "EDEDED" --description "长期无活动的 Issue"
 
-      - uses: actions/stale@v10
+      - uses: actions/stale@v11
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           operations-per-run: 200
