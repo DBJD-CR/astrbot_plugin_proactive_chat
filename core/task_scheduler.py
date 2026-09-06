@@ -131,6 +131,43 @@ class SchedulerMixin:
         # 与 APScheduler misfire_grace_time 保持一致，允许 60 秒轻微抖动
         return check_time < (next_trigger + 60)
 
+    def _get_max_unanswered_count(
+        self, session_config: dict | None, default: int = 3
+    ) -> int:
+        """Return the configured unanswered limit, treating non-positive values as disabled."""
+        if not isinstance(session_config, dict):
+            return default
+        schedule_conf = session_config.get("schedule_settings", {})
+        if not isinstance(schedule_conf, dict):
+            return default
+        try:
+            return int(schedule_conf.get("max_unanswered_times", default) or 0)
+        except (TypeError, ValueError):
+            return default
+
+    def _is_unanswered_limit_reached(
+        self,
+        session_id: str,
+        session_config: dict | None,
+        unanswered_count: int | None = None,
+    ) -> bool:
+        """Shared guard used by runtime scheduling and Pages task snapshots."""
+        max_unanswered = self._get_max_unanswered_count(session_config)
+        if max_unanswered <= 0:
+            return False
+        if unanswered_count is None:
+            session_info = self.session_data.get(session_id)
+            if isinstance(session_info, dict):
+                try:
+                    unanswered_count = int(
+                        session_info.get("unanswered_count", 0) or 0
+                    )
+                except (TypeError, ValueError):
+                    unanswered_count = 0
+            else:
+                unanswered_count = 0
+        return unanswered_count >= max_unanswered
+
     def _clear_session_schedule_state(
         self,
         session_id: str,
@@ -158,6 +195,10 @@ class SchedulerMixin:
             "last_schedule_min_interval_seconds",
             "last_schedule_max_interval_seconds",
             "last_schedule_random_interval_seconds",
+            "last_schedule_strategy",
+            "last_schedule_reason",
+            "last_schedule_rule",
+            "last_schedule_source",
         }
 
         changed = False
@@ -190,6 +231,18 @@ class SchedulerMixin:
                     self.scheduler.remove_job(job.id)
                 except Exception:
                     pass
+
+    def _remove_schedule_for_limit_reached(
+        self, session_id: str, session_config: dict | None = None
+    ) -> bool:
+        """达到未回复上限时清理调度器任务和持久化调度字段。"""
+        normalized_session_id = self._normalize_session_id(session_id)
+        self._purge_related_jobs(normalized_session_id)
+        changed = self._clear_session_schedule_state(normalized_session_id)
+        logger.info(
+            f"[主动消息] {self._get_session_log_str(normalized_session_id, session_config)} 已达到未回复次数上限，已清理待触发任务并暂停调度喵。"
+        )
+        return changed
 
     def _has_related_persisted_task(self, session_id: str) -> bool:
         """判断同一目标是否存在仍可恢复的持久化任务（避免重复触发）。"""
@@ -420,6 +473,14 @@ class SchedulerMixin:
                     )
                 continue
 
+            if self._is_unanswered_limit_reached(session_id, session_config):
+                if self._clear_session_schedule_state(session_id):
+                    cleaned_runtime_state += 1
+                logger.info(
+                    f"[主动消息] {self._get_session_log_str(session_id, session_config)} 的未回复次数已达到上限，跳过恢复定时任务喵。"
+                )
+                continue
+
             try:
                 run_date = datetime.fromtimestamp(next_trigger, tz=self.timezone)
                 existing_job = self.scheduler.get_job(session_id)
@@ -498,6 +559,16 @@ class SchedulerMixin:
                 self.session_data.setdefault(normalized_session_id, {})[
                     "unanswered_count"
                 ] = 0
+
+            if not reset_counter and self._is_unanswered_limit_reached(
+                normalized_session_id, session_config
+            ):
+                changed = self._remove_schedule_for_limit_reached(
+                    normalized_session_id, session_config
+                )
+                if changed:
+                    await self._save_data_internal()
+                return
 
             # 计算随机触发时间
             min_interval = int(schedule_conf.get("min_interval_minutes", 30)) * 60

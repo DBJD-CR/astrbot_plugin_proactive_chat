@@ -136,6 +136,7 @@ class LifecycleMixin:
         try:
             if self.web_admin_server:
                 await self.web_admin_server.start()
+                self.web_admin_server.register_astrbot_page_api()
         except Exception as e:
             logger.error(f"[主动消息] Web 管理端启动失败喵: {e}")
             if self.telemetry and self.telemetry.enabled:

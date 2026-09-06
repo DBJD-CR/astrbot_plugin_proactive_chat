@@ -1,0 +1,45 @@
+/*
+ * Outfit 字体族定义。
+ * 采用本地静态字体文件而非远程 CDN，确保插件离线可用且首屏加载更稳定。
+ * 各个字重拆分声明，浏览器可根据 font-weight 自动匹配最接近的字体文件。
+ */
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 400;
+  /* swap 可避免字体尚未加载时页面长时间不可见。 */
+  font-display: swap;
+  src: url(outfit-400.ttf) format('truetype');
+}
+
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(outfit-500.ttf) format('truetype');
+}
+
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(outfit-600.ttf) format('truetype');
+}
+
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(outfit-700.ttf) format('truetype');
+}
+
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url(outfit-800.ttf) format('truetype');
+}

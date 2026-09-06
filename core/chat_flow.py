@@ -88,6 +88,7 @@ class ProactiveCoreMixin:
         )
         session_config = None
         scheduled_job_payload = None
+        limit_reached_after_send = False
 
         async with self.data_lock:
             # 更新未回复计数器
@@ -106,32 +107,53 @@ class ProactiveCoreMixin:
                 if not session_config:
                     return
 
-                schedule_conf = session_config.get("schedule_settings", {})
-                min_interval = int(schedule_conf.get("min_interval_minutes", 30)) * 60
-                max_interval = max(
-                    min_interval,
-                    int(schedule_conf.get("max_interval_minutes", 900)) * 60,
-                )
-                # 私聊采用配置区间内随机间隔，减少触发规律性
-                random_interval = random.randint(min_interval, max_interval)
-                scheduled_at = time.time()
-                next_trigger_time = scheduled_at + random_interval
-                run_date = datetime.fromtimestamp(next_trigger_time, tz=self.timezone)
+                if self._is_unanswered_limit_reached(
+                    session_id, session_config, new_unanswered_count
+                ):
+                    limit_reached_after_send = True
+                    self._clear_session_schedule_state(session_id)
+                    logger.info(
+                        f"[主动消息] {self._get_session_log_str(session_id, session_config)} 的未回复次数已达到上限，停止安排下一次主动消息喵。"
+                    )
+                else:
+                    schedule_conf = session_config.get("schedule_settings", {})
+                    min_interval = (
+                        int(schedule_conf.get("min_interval_minutes", 30)) * 60
+                    )
+                    max_interval = max(
+                        min_interval,
+                        int(schedule_conf.get("max_interval_minutes", 900)) * 60,
+                    )
+                    # 私聊采用配置区间内随机间隔，减少触发规律性
+                    random_interval = random.randint(min_interval, max_interval)
+                    scheduled_at = time.time()
+                    next_trigger_time = scheduled_at + random_interval
+                    run_date = datetime.fromtimestamp(
+                        next_trigger_time, tz=self.timezone
+                    )
 
-                session_payload = self.session_data.setdefault(session_id, {})
-                session_payload["next_trigger_time"] = next_trigger_time
-                session_payload["last_scheduled_at"] = scheduled_at
-                session_payload["last_schedule_min_interval_seconds"] = min_interval
-                session_payload["last_schedule_max_interval_seconds"] = max_interval
-                session_payload["last_schedule_random_interval_seconds"] = (
-                    random_interval
-                )
-                scheduled_job_payload = {
-                    "run_date": run_date,
-                    "session_config": session_config,
-                }
+                    session_payload = self.session_data.setdefault(session_id, {})
+                    session_payload["next_trigger_time"] = next_trigger_time
+                    session_payload["last_scheduled_at"] = scheduled_at
+                    session_payload["last_schedule_min_interval_seconds"] = (
+                        min_interval
+                    )
+                    session_payload["last_schedule_max_interval_seconds"] = (
+                        max_interval
+                    )
+                    session_payload["last_schedule_random_interval_seconds"] = (
+                        random_interval
+                    )
+                    scheduled_job_payload = {
+                        "run_date": run_date,
+                        "session_config": session_config,
+                    }
 
             await self._save_data_internal()
+
+        if limit_reached_after_send:
+            self._purge_related_jobs(session_id)
+            return
 
         if scheduled_job_payload is not None:
             self.scheduler.add_job(

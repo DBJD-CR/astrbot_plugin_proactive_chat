@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import math
 import os
@@ -13,6 +14,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from astrbot.api import logger
 
@@ -33,6 +35,43 @@ except ImportError:
     logger.warning(
         "[主动消息] FastAPI 未安装喵，Web 管理端不可用喵。请安装: pip install fastapi uvicorn"
     )
+
+try:
+    from quart import request as quart_request
+except ImportError:
+    quart_request = None
+
+
+def _patch_starlette_router_startup_kwargs() -> None:
+    """兼容 FastAPI 与较新 Starlette Router 的启动参数签名差异。"""
+    try:
+        from starlette.routing import Router
+    except Exception as e:
+        logger.debug(f"[主动消息] 检查 Starlette Router 兼容性失败喵: {e}")
+        return
+
+    init = Router.__init__
+    if getattr(init, "_proactive_chat_startup_patch", False):
+        return
+
+    try:
+        params = inspect.signature(init).parameters
+    except (TypeError, ValueError) as e:
+        logger.debug(f"[主动消息] 读取 Starlette Router 签名失败喵: {e}")
+        return
+
+    unsupported = {name for name in ("on_startup", "on_shutdown") if name not in params}
+    if not unsupported:
+        return
+
+    def patched_init(self, *args, **kwargs):
+        for name in unsupported:
+            kwargs.pop(name, None)
+        return init(self, *args, **kwargs)
+
+    patched_init._proactive_chat_startup_patch = True
+    Router.__init__ = patched_init
+    logger.info("[主动消息] 已应用 FastAPI / Starlette Router 启动参数兼容补丁喵。")
 
 
 def _is_running_in_docker() -> bool:
@@ -59,11 +98,16 @@ def _is_running_in_docker() -> bool:
 class WebAdminServer:
     """主动消息插件 Web 管理端服务器。"""
 
+    ASTRBOT_PLUGIN_NAME = "astrbot_plugin_proactive_chat"
+    ASTRBOT_PAGE_API_ENDPOINT = "dashboard"
+    ASTRBOT_PAGE_API_PATH = f"/{ASTRBOT_PLUGIN_NAME}/{ASTRBOT_PAGE_API_ENDPOINT}"
+
     def __init__(self, plugin: Any):
         # plugin 是主插件实例，Web 端所有状态与操作都通过它间接访问。
         self.plugin = plugin
         # 直接缓存配置引用，便于路由中统一读写。
         self.config = plugin.config
+        self._native_config = self.config if hasattr(self.config, "save_config") else None
         # FastAPI 应用实例，仅在依赖存在且初始化成功时设置。
         self.app: FastAPI | None = None
         # Uvicorn Server 实例，用于控制启动与停止。
@@ -78,6 +122,7 @@ class WebAdminServer:
         self._token_expire_seconds = 60 * 60 * 24
         # 简单的内存令牌表：token -> 过期时间戳。
         self._tokens: dict[str, float] = {}
+        self._background_tasks: set[asyncio.Task] = set()
         # 仅当配置中设置了密码时才开启鉴权。
         self._auth_enabled = bool(self.config.get("web_admin", {}).get("password", ""))
         # 缓存插件版本，避免在高频状态轮询与广播中重复读取文件。
@@ -101,7 +146,226 @@ class WebAdminServer:
                     f" 可能是 FastAPI / Pydantic 依赖版本不兼容: {e}"
                 )
 
+    def _decode_route_umo(self, umo: str) -> str:
+        """Decode URL-encoded UMO path parameters from Pages/Web API routes."""
+        try:
+            return unquote(str(umo or ""))
+        except Exception:
+            return str(umo or "")
+
+    def _track_background_task(self, task: asyncio.Task) -> None:
+        track_task = getattr(self.plugin, "_track_task", None)
+        if callable(track_task):
+            track_task(task)
+            return
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def register_astrbot_page_api(self) -> None:
+        """向 AstrBot WebUI 插件 Page 暴露完整管理端接口。"""
+        context = getattr(self.plugin, "context", None)
+        register = getattr(context, "register_web_api", None)
+        if not callable(register):
+            logger.debug(
+                "[主动消息] 当前 AstrBot 版本未提供 register_web_api，跳过插件卡片接口注册喵。"
+            )
+            return
+
+        routes = (
+            ("dashboard", self.build_astrbot_page_payload, ["GET"]),
+            ("embedded-dashboard", self.build_astrbot_page_payload, ["GET"]),
+            ("auth-info", self._page_auth_info, ["GET"]),
+            ("login", self._page_login, ["POST"]),
+            ("status", self._page_status, ["GET"]),
+            ("config", self._page_config, ["GET", "POST"]),
+            ("config-save", self._page_update_config, ["POST"]),
+            ("get_config", self._page_get_config, ["GET"]),
+            ("save_config", self._page_save_config, ["POST"]),
+            ("config-schema", self._page_get_config_schema, ["GET"]),
+            ("session-config/sessions", self._page_list_session_configs, ["GET"]),
+            ("session-config/<path:umo>", self._page_session_config, ["GET", "POST"]),
+            (
+                "session-config-save/<path:umo>",
+                self._page_update_session_config,
+                ["POST"],
+            ),
+            (
+                "session-config-delete/<path:umo>",
+                self._page_reset_session_config,
+                ["POST"],
+            ),
+            ("jobs", self._page_list_jobs, ["GET"]),
+            ("jobs/<path:umo>/reschedule", self._page_reschedule_job, ["POST"]),
+            ("jobs/<path:umo>/trigger", self._page_trigger_job, ["POST"]),
+            ("jobs-cancel/<path:umo>", self._page_cancel_job, ["POST"]),
+        )
+
+        registered_count = 0
+        for endpoint, handler, methods in routes:
+            path = f"/{self.ASTRBOT_PLUGIN_NAME}/{endpoint}"
+            if self._register_astrbot_page_route(register, path, handler, methods):
+                registered_count += 1
+
+        logger.info(
+            f"[主动消息] 已注册 AstrBot 插件卡片管理端接口 {registered_count}/{len(routes)} 个喵。"
+        )
+
+    def _register_astrbot_page_route(
+        self,
+        register,
+        path: str,
+        handler,
+        methods: list[str],
+    ) -> bool:
+        """兼容不同 AstrBot 版本的 register_web_api 签名。"""
+        attempts = (
+            lambda: register(path, handler, methods, "Proactive chat WebUI API"),
+            lambda: register(path, handler, methods=methods),
+            lambda: register(methods[0], path, handler),
+            lambda: register(path, handler),
+        )
+
+        last_error: Exception | None = None
+        for attempt in attempts:
+            try:
+                attempt()
+                return True
+            except TypeError as e:
+                last_error = e
+                continue
+            except Exception as e:
+                logger.warning(
+                    f"[主动消息] 注册 AstrBot 插件卡片接口失败喵: {path}: {e}"
+                )
+                return False
+
+        if last_error:
+            logger.debug(
+                f"[主动消息] AstrBot 插件卡片接口签名不兼容，已跳过 {path} 喵: {last_error}"
+            )
+        return False
+
+    async def _read_astrbot_page_json(self) -> dict[str, Any]:
+        """Read JSON sent through AstrBot Pages' Quart-based plugin API bridge."""
+        if quart_request is None:
+            return {}
+
+        payload = None
+        for kwargs in ({"silent": True}, {"force": True}, {}):
+            try:
+                payload = await quart_request.get_json(**kwargs)
+                if payload is not None:
+                    break
+            except TypeError:
+                continue
+            except Exception:
+                continue
+        return self._unwrap_page_payload(payload)
+
+    def _unwrap_page_payload(self, payload: Any) -> dict[str, Any]:
+        """Unwrap bridge envelopes such as {"body": {...}} without changing normal JSON."""
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except Exception:
+                return {}
+        if not isinstance(payload, dict):
+            return {}
+
+        for key in ("body", "data", "payload"):
+            if set(payload.keys()) != {key}:
+                continue
+            nested = payload.get(key)
+            if isinstance(nested, str):
+                try:
+                    nested = json.loads(nested)
+                except Exception:
+                    return {}
+            if isinstance(nested, dict):
+                return nested
+        return payload
+
+    def _get_astrbot_page_method(self) -> str:
+        if quart_request is None:
+            return "GET"
+        return str(getattr(quart_request, "method", "GET") or "GET").upper()
+
+    async def _page_auth_info(self):
+        return {"auth_required": False}
+
+    async def _page_login(self):
+        return {"token": "page-bridge", "auth_required": False}
+
+    async def _page_status(self):
+        return self._build_status_payload()
+
+    async def _page_get_config(self):
+        return self._build_config_payload()
+
+    async def _page_update_config(self):
+        payload = await self._read_astrbot_page_json()
+        return await self._apply_config_payload(payload)
+
+    async def _page_save_config(self):
+        payload = await self._read_astrbot_page_json()
+        logger.info(
+            f"[主动消息] Pages save_config 收到保存请求喵，字段: {sorted(payload.keys())}"
+        )
+        result = await self._apply_config_payload(payload)
+        if not result.get("ok", False):
+            return {
+                "success": False,
+                "error": result.get("error") or result.get("message") or "保存失败",
+                "received": True,
+                "received_keys": sorted(payload.keys()),
+            }
+        return {
+            "success": True,
+            "received": True,
+            "received_keys": sorted(payload.keys()),
+            "config": result.get("config") or self._build_config_payload(),
+        }
+
+    async def _page_config(self):
+        if self._get_astrbot_page_method() == "POST":
+            return await self._page_update_config()
+        return await self._page_get_config()
+
+    async def _page_get_config_schema(self):
+        return await self._load_config_schema_payload()
+
+    async def _page_list_session_configs(self):
+        return {"sessions": self._list_session_config_payloads()}
+
+    async def _page_get_session_config(self, umo: str):
+        return self._build_session_config_payload(umo)
+
+    async def _page_update_session_config(self, umo: str):
+        payload = await self._read_astrbot_page_json()
+        return await self._apply_session_config_payload(umo, payload)
+
+    async def _page_session_config(self, umo: str):
+        if self._get_astrbot_page_method() == "POST":
+            return await self._page_update_session_config(umo)
+        return await self._page_get_session_config(umo)
+
+    async def _page_reset_session_config(self, umo: str):
+        return await self._reset_session_config_payload(umo)
+
+    async def _page_list_jobs(self):
+        return {"jobs": self._collect_jobs()}
+
+    async def _page_reschedule_job(self, umo: str):
+        return await self._reschedule_job_payload(umo)
+
+    async def _page_trigger_job(self, umo: str):
+        return await self._trigger_job_payload(umo)
+
+    async def _page_cancel_job(self, umo: str):
+        return await self._cancel_job_payload(umo)
+
     def _setup_app(self) -> None:
+        _patch_starlette_router_startup_kwargs()
         # 创建 FastAPI 应用，版本号用于控制台元信息展示。
         self.app = FastAPI(
             title="主动消息管理端",
@@ -205,6 +469,11 @@ class WebAdminServer:
             # 汇总插件运行状态、计时器与连接数，供首页卡片与轮询逻辑使用。
             return self._build_status_payload()
 
+        @self.app.get("/api/embedded-dashboard")
+        async def embedded_dashboard():
+            # 给 AstrBot 插件 Page 或其它轻量入口复用的聚合快照。
+            return await self.build_astrbot_page_payload()
+
         @self.app.get("/api/markdown-files")
         async def list_markdown_files():
             # 仅暴露插件目录内明确允许浏览的 Markdown 文档，避免前端任意探测文件系统。
@@ -279,27 +548,10 @@ class WebAdminServer:
 
         @self.app.post("/api/config")
         async def update_config(payload: dict[str, Any]):
-            # 仅允许更新这三个一级配置块，避免前端误写其它未知字段。
-            allowed_keys = {"friend_settings", "group_settings", "web_admin"}
-            for key in allowed_keys:
-                if key not in payload:
-                    continue
-                if key == "web_admin":
-                    # web_admin 采用增量合并，避免未提交字段被整个覆盖掉。
-                    old = dict(self.config.get("web_admin", {}))
-                    old.update(payload.get("web_admin", {}))
-                    # 密码字段允许显式更新，但不会通过 get_config 回传给前端。
-                    if "password" in payload.get("web_admin", {}):
-                        old["password"] = payload["web_admin"]["password"]
-                    self.config["web_admin"] = old
-                else:
-                    # friend / group 配置块按前端提交的完整对象直接替换。
-                    self.config[key] = payload[key]
-
-            self._save_plugin_config()
-            # 配置变更后立即广播，确保所有已打开页面实时刷新。
-            await self._broadcast_update("config")
-            return {"ok": True}
+            result = await self._apply_config_payload(payload)
+            if not result.get("ok", False):
+                return JSONResponse(result, status_code=400)
+            return result
 
         @self.app.get("/api/session-config/sessions")
         async def list_session_configs():
@@ -337,7 +589,7 @@ class WebAdminServer:
         @self.app.get("/api/session-config/{umo:path}")
         async def get_session_config(umo: str):
             # 路径参数使用 path 转换器，允许会话 ID 中包含斜杠等特殊字符。
-            normalized = self.plugin._normalize_session_id(umo)
+            normalized = self.plugin._normalize_session_id(self._decode_route_umo(umo))
             base = self.plugin._get_base_session_config(normalized)
             return {
                 "session": normalized,
@@ -353,7 +605,7 @@ class WebAdminServer:
 
         @self.app.post("/api/session-config/{umo:path}")
         async def update_session_config(umo: str, payload: dict[str, Any]):
-            normalized = self.plugin._normalize_session_id(umo)
+            normalized = self.plugin._normalize_session_id(self._decode_route_umo(umo))
             # mode 用于兼容两种写法：直接提交 override，或提交最终 effective 配置。
             mode = payload.get("mode", "effective")
 
@@ -403,7 +655,7 @@ class WebAdminServer:
         @self.app.delete("/api/session-config/{umo:path}")
         async def reset_session_config(umo: str):
             # 删除覆写后，会话会重新完全继承全局配置。
-            normalized = self.plugin._normalize_session_id(umo)
+            normalized = self.plugin._normalize_session_id(self._decode_route_umo(umo))
             await self.plugin.session_override_manager.delete_override(normalized)
             await self._broadcast_update("session-config")
             return {
@@ -420,7 +672,7 @@ class WebAdminServer:
 
         @self.app.post("/api/jobs/{umo:path}/reschedule")
         async def reschedule_job(umo: str):
-            normalized = self.plugin._normalize_session_id(umo)
+            normalized = self.plugin._normalize_session_id(self._decode_route_umo(umo))
             session_config = self.plugin._get_session_config(normalized)
             if not session_config or not session_config.get("enable", False):
                 return JSONResponse(
@@ -600,7 +852,7 @@ class WebAdminServer:
         @self.app.post("/api/jobs/{umo:path}/trigger")
         async def trigger_job(umo: str):
             # 立即手动触发一次指定会话的检查与发言流程；同一会话在执行完成前禁止重复触发。
-            normalized = self.plugin._normalize_session_id(umo)
+            normalized = self.plugin._normalize_session_id(self._decode_route_umo(umo))
             if normalized in self.plugin.manual_trigger_sessions:
                 return JSONResponse(
                     {
@@ -625,7 +877,7 @@ class WebAdminServer:
 
         @self.app.delete("/api/jobs/{umo:path}")
         async def cancel_job(umo: str):
-            normalized = self.plugin._normalize_session_id(umo)
+            normalized = self.plugin._normalize_session_id(self._decode_route_umo(umo))
             removed = False
             try:
                 # APScheduler 中的 job id 直接使用规范化后的 session id。
@@ -637,9 +889,9 @@ class WebAdminServer:
 
             async with self.plugin.data_lock:
                 if normalized in self.plugin.session_data:
-                    # 同步清理持久化数据中的 next_trigger_time，避免界面显示过期信息。
-                    self.plugin.session_data[normalized].pop("next_trigger_time", None)
-                    await self.plugin._save_data_internal()
+                    # 同步清理持久化调度字段，避免界面显示过期倒计时。
+                    if self.plugin._clear_session_schedule_state(normalized):
+                        await self.plugin._save_data_internal()
 
             if removed:
                 logger.info(
@@ -728,13 +980,32 @@ class WebAdminServer:
                 if websocket in self._ws_connections:
                     self._ws_connections.remove(websocket)
 
-    def _save_plugin_config(self) -> None:
+    def _set_config_section(self, key: str, value: Any) -> None:
+        self.config[key] = value
+
+    def _save_plugin_config(self) -> tuple[bool, str | None]:
+        """Persist config through AstrBot's native object and notify newer contexts."""
         try:
             # AstrBot 配置对象通常提供 save_config 方法，这里做鸭子类型兼容。
-            if hasattr(self.config, "save_config"):
-                self.config.save_config()
+            native = self._native_config or (
+                self.config if hasattr(self.config, "save_config") else None
+            )
+            if native is not None:
+                if native is not self.config:
+                    native.clear()
+                    native.update(self.config)
+                native.save_config()
+
+            context = getattr(self.plugin, "context", None)
+            update_config = getattr(context, "update_config", None)
+            if callable(update_config):
+                updated = update_config(self.config)
+                if inspect.isawaitable(updated):
+                    self._track_background_task(asyncio.create_task(updated))
+            return True, None
         except Exception as e:
             logger.warning(f"[主动消息] 保存配置失败喵: {e}")
+            return False, str(e)
 
     def _issue_token(self) -> str:
         # 生成适合放入 URL / Header 的安全随机 token。
@@ -757,6 +1028,340 @@ class WebAdminServer:
             self._tokens.pop(token, None)
             return False
         return True
+
+    def _build_config_payload(self) -> dict[str, Any]:
+        web_admin = {
+            k: v for k, v in self.config.get("web_admin", {}).items() if k != "password"
+        }
+        return {
+            "friend_settings": dict(self.config.get("friend_settings", {})),
+            "group_settings": dict(self.config.get("group_settings", {})),
+            "web_admin": web_admin,
+            "notification_settings": dict(self.config.get("notification_settings", {})),
+        }
+
+    async def _apply_config_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        # Pages 只能写入 WebUI 暴露的四个顶层配置段，避免误把运行时状态写进主配置。
+        allowed_keys = {
+            "friend_settings",
+            "group_settings",
+            "web_admin",
+            "notification_settings",
+        }
+        changed = False
+        for key in allowed_keys:
+            if key not in payload:
+                continue
+            if key != "web_admin" and not isinstance(payload[key], dict):
+                return {"ok": False, "error": f"{key} must be an object"}
+            if key == "web_admin":
+                if not isinstance(payload.get("web_admin"), dict):
+                    return {"ok": False, "error": "web_admin must be an object"}
+                old = dict(self.config.get("web_admin", {}))
+                old.update(payload.get("web_admin", {}))
+                if "password" in payload.get("web_admin", {}):
+                    old["password"] = payload["web_admin"]["password"]
+                self._set_config_section("web_admin", old)
+            else:
+                self._set_config_section(key, payload[key])
+            changed = True
+
+        if not changed:
+            return {"ok": False, "error": "No supported config keys received"}
+
+        saved, error = self._save_plugin_config()
+        if not saved:
+            return {"ok": False, "error": error or "Config save failed"}
+        self._auth_enabled = bool(self.config.get("web_admin", {}).get("password", ""))
+        await self._broadcast_update("config")
+        return {"ok": True, "config": self._build_config_payload()}
+
+    async def _load_config_schema_payload(self) -> dict[str, Any]:
+        schema_path = Path(__file__).resolve().parent.parent / "_conf_schema.json"
+        if schema_path.exists():
+            try:
+                schema_text = await asyncio.to_thread(
+                    schema_path.read_text, encoding="utf-8"
+                )
+                return json.loads(schema_text)
+            except Exception as e:
+                logger.error(f"[主动消息] 读取 Schema 失败喵: {e}")
+        return {}
+
+    def _list_session_config_payloads(self) -> list[dict[str, Any]]:
+        result = []
+        for session in self._list_known_sessions():
+            override = self.plugin.session_override_manager.get_override(session)
+            effective = self.plugin._get_session_config(session)
+            session_name = self.plugin._get_session_name(session, effective)
+            result.append(
+                {
+                    "session": session,
+                    "session_name": session_name,
+                    "session_display_name": self.plugin._get_session_display_name(
+                        session, effective
+                    ),
+                    "has_override": bool(override),
+                    "override_keys": list(override.keys()),
+                    "enabled": bool(effective and effective.get("enable", False)),
+                    "next_trigger_time": self.plugin.session_data.get(session, {}).get(
+                        "next_trigger_time"
+                    ),
+                    "unanswered_count": self.plugin.session_data.get(session, {}).get(
+                        "unanswered_count", 0
+                    ),
+                }
+            )
+        return result
+
+    def _build_session_config_payload(self, umo: str) -> dict[str, Any]:
+        normalized = self.plugin._normalize_session_id(self._decode_route_umo(umo))
+        base = self.plugin._get_base_session_config(normalized)
+        return {
+            "session": normalized,
+            "base": base,
+            "override": self.plugin.session_override_manager.get_override(normalized),
+            "effective": self.plugin._get_session_config(normalized),
+        }
+
+    async def _apply_session_config_payload(
+        self, umo: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        normalized = self.plugin._normalize_session_id(self._decode_route_umo(umo))
+        mode = payload.get("mode", "effective")
+
+        if mode == "override":
+            # override 模式直接保存差异片段，适合高级用户或后续批量编辑入口。
+            override = payload.get("override", {})
+            if not isinstance(override, dict):
+                return {"ok": False, "error": "override 必须是对象"}
+            await self.plugin.session_override_manager.set_override(
+                normalized, override
+            )
+        else:
+            # effective 模式让前端提交完整会话配置，后端负责计算与全局配置的最小差异。
+            effective = payload.get("effective", {})
+            if not isinstance(effective, dict):
+                return {"ok": False, "error": "effective 必须是对象"}
+            base = self.plugin._get_base_session_config(normalized)
+            if not base:
+                return {
+                    "ok": False,
+                    "error": "会话未命中 friend/group 全局配置，无法保存 effective",
+                }
+            await self.plugin.session_override_manager.update_session_from_effective(
+                normalized,
+                base,
+                effective,
+            )
+
+        await self._broadcast_update("session-config")
+        return {
+            "ok": True,
+            "session": normalized,
+            "override": self.plugin.session_override_manager.get_override(normalized),
+            "effective": self.plugin._get_session_config(normalized),
+        }
+
+    async def _reset_session_config_payload(self, umo: str) -> dict[str, Any]:
+        normalized = self.plugin._normalize_session_id(self._decode_route_umo(umo))
+        await self.plugin.session_override_manager.delete_override(normalized)
+        await self._broadcast_update("session-config")
+        return {
+            "ok": True,
+            "session": normalized,
+            "override": {},
+            "effective": self.plugin._get_session_config(normalized),
+        }
+
+    async def _reschedule_job_payload(self, umo: str) -> dict[str, Any]:
+        normalized = self.plugin._normalize_session_id(self._decode_route_umo(umo))
+        session_config = self.plugin._get_session_config(normalized)
+        if not session_config or not session_config.get("enable", False):
+            return {
+                "ok": False,
+                "session": normalized,
+                "error": "会话未启用或配置不存在，无法重新调度",
+            }
+
+        await self.plugin._schedule_next_chat_and_save(normalized, reset_counter=False)
+        await self._broadcast_update("jobs")
+        return {
+            "ok": True,
+            "session": normalized,
+            "message": "已重新调度下一次主动消息时间",
+        }
+
+    async def _trigger_job_payload(self, umo: str) -> dict[str, Any]:
+        normalized = self.plugin._normalize_session_id(self._decode_route_umo(umo))
+        if normalized in self.plugin.manual_trigger_sessions:
+            return {
+                "ok": False,
+                "session": normalized,
+                "in_progress": True,
+                "message": "该任务正在立即触发中，请等待当前执行完成",
+            }
+
+        self.plugin.manual_trigger_sessions.add(normalized)
+        self._track_background_task(
+            asyncio.create_task(self.plugin.check_and_chat(normalized))
+        )
+        await self._broadcast_update("jobs")
+        return {
+            "ok": True,
+            "session": normalized,
+            "in_progress": True,
+            "message": "已开始立即触发，正在等待 LLM 完成回复",
+        }
+
+    async def _cancel_job_payload(self, umo: str) -> dict[str, Any]:
+        normalized = self.plugin._normalize_session_id(self._decode_route_umo(umo))
+        removed = False
+        try:
+            self.plugin.scheduler.remove_job(normalized)
+            removed = True
+        except Exception:
+            pass
+
+        async with self.plugin.data_lock:
+            if normalized in self.plugin.session_data:
+                if self.plugin._clear_session_schedule_state(normalized):
+                    await self.plugin._save_data_internal()
+
+        await self._broadcast_update("jobs")
+        return {"ok": True, "session": normalized, "removed": removed}
+
+    async def _mark_notification_read_payload(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        if not getattr(self.plugin, "notification_center", None):
+            return {"ok": False, "error": "通知系统不可用"}
+
+        notification_id = payload.get("id")
+        if notification_id is None:
+            return {"ok": False, "error": "缺少必填字段 id"}
+        try:
+            normalized_id = int(notification_id)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "id 必须是数字"}
+
+        result = await self.plugin.notification_center.mark_as_read(normalized_id)
+        await self._broadcast_update("notifications")
+        return result
+
+    async def _mark_all_notifications_read_payload(self) -> dict[str, Any]:
+        if not getattr(self.plugin, "notification_center", None):
+            return {"ok": False, "error": "通知系统不可用"}
+        result = await self.plugin.notification_center.mark_all_as_read()
+        await self._broadcast_update("notifications")
+        return result
+
+    async def _refresh_notifications_payload(self) -> dict[str, Any]:
+        if not getattr(self.plugin, "notification_center", None):
+            return {"ok": False, "error": "通知系统不可用"}
+        changed = await self.plugin.notification_center.refresh()
+        await self._broadcast_update("notifications")
+        payload = await self.plugin.notification_center.get_payload()
+        return {
+            "ok": True,
+            "changed": changed,
+            "items": payload.get("items", []),
+            "meta": payload.get("meta", {}),
+        }
+
+    async def _build_markdown_file_payload(self, file_path: str) -> dict[str, Any]:
+        resolved = self._resolve_markdown_document(file_path)
+        if not resolved:
+            return {"ok": False, "error": "文档不存在或不允许访问"}
+
+        try:
+            content = await asyncio.to_thread(resolved.read_text, encoding="utf-8")
+        except UnicodeDecodeError:
+            return {
+                "ok": False,
+                "error": "文档编码不受支持，仅支持 UTF-8 Markdown 文件",
+            }
+        except Exception as e:
+            logger.error(f"[主动消息] 读取 Markdown 文档失败喵: {e}")
+            return {"ok": False, "error": "读取文档失败", "message": str(e)}
+
+        return {
+            "path": self._to_workspace_relative_path(resolved),
+            "title": resolved.stem,
+            "content": content,
+            "content_format": "markdown",
+        }
+
+    async def _open_directory_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        target = str(payload.get("path", "plugin")).strip().lower()
+        directory = (
+            Path(self.plugin.data_dir)
+            if target == "data"
+            else Path(__file__).resolve().parent.parent
+        )
+
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            dir_str = str(directory)
+
+            if _is_running_in_docker():
+                return {
+                    "ok": False,
+                    "error": "Docker 环境下不支持在宿主机直接打开目录，请手动查看挂载路径",
+                    "path": dir_str,
+                }
+
+            if os.name == "nt":
+                await asyncio.to_thread(os.startfile, dir_str)
+            elif sys.platform == "darwin":
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["open", dir_str],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    detail = (result.stderr or result.stdout or "未知错误").strip()
+                    return {
+                        "ok": False,
+                        "error": "打开目录失败（macOS）",
+                        "message": f"open 命令执行失败: {detail}",
+                        "path": dir_str,
+                    }
+            else:
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["xdg-open", dir_str],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    detail = (result.stderr or result.stdout or "未知错误").strip()
+                    return {
+                        "ok": False,
+                        "error": "打开目录失败（Linux）",
+                        "message": (
+                            "xdg-open 执行失败，服务器可能缺少桌面环境或未安装 xdg-open: "
+                            f"{detail}"
+                        ),
+                        "path": dir_str,
+                    }
+
+            return {
+                "ok": True,
+                "path": dir_str,
+                "message": "已在系统文件管理器中打开目录",
+            }
+        except Exception as e:
+            logger.error(f"[主动消息] 打开目录失败喵: {e}")
+            return {
+                "ok": False,
+                "error": "打开目录失败",
+                "message": str(e),
+                "path": str(directory),
+            }
 
     def _safe_timer_meta(self, timer: Any, now: float) -> dict[str, float | int | None]:
         # 某些会话可能当前没有有效 timer，此时直接返回空元信息。
@@ -941,6 +1546,115 @@ class WebAdminServer:
             )
 
         # 统一按剩余时间升序排序，让最接近触发的卡片优先显示。
+        live_auto_sessions = {
+            str(card.get("session_id", "")) for card in auto_cards if card.get("session_id")
+        }
+        live_group_sessions = {
+            str(card.get("session_id", ""))
+            for card in group_cards
+            if card.get("session_id")
+        }
+
+        # Expose configured sessions even when no asyncio timer handle is currently
+        # registered. Without these placeholders the Pages dashboard looks empty,
+        # while the real state is often "waiting for the first message/event".
+        for session_id in self._list_known_sessions():
+            normalized_session_id = self.plugin._normalize_session_id(str(session_id))
+            session_config = self.plugin._get_session_config(normalized_session_id)
+            if not session_config or not session_config.get("enable", False):
+                continue
+
+            session_category = self._detect_session_category(normalized_session_id)
+            session_data = self.plugin.session_data.get(
+                normalized_session_id, self.plugin.session_data.get(str(session_id), {})
+            )
+            schedule_settings = session_config.get("schedule_settings", {})
+            context_settings = session_config.get("context_settings", {})
+            common_payload = {
+                "session_id": normalized_session_id,
+                "session_name": self.plugin._get_session_name(
+                    normalized_session_id, session_config
+                ),
+                "session_display_name": self.plugin._get_session_display_name(
+                    normalized_session_id, session_config
+                ),
+                "session_category": session_category,
+                "source_mode": context_settings.get(
+                    "source_mode",
+                    "platform_message_history"
+                    if session_category == "group"
+                    else "conversation_history",
+                ),
+                "max_unanswered_times": schedule_settings.get(
+                    "max_unanswered_times", 0
+                ),
+                "remaining_seconds": None,
+                "target_time": None,
+                "progress_percent": 0,
+                "unanswered_count": session_data.get("unanswered_count", 0),
+            }
+
+            if session_category == "group":
+                if normalized_session_id in live_group_sessions:
+                    continue
+
+                idle_minutes = int(
+                    session_config.get("group_idle_trigger_minutes", 0) or 0
+                )
+                if idle_minutes <= 0:
+                    continue
+
+                group_cards.append(
+                    {
+                        **common_payload,
+                        "timer_kind": "group_silence",
+                        "title": "群沉默检测",
+                        "timer_kind_label": "群沉默检测",
+                        "status": "waiting_message",
+                        "window_seconds": idle_minutes * 60,
+                        "group_idle_trigger_minutes": idle_minutes,
+                        "last_message_time": self.plugin.last_message_times.get(
+                            normalized_session_id
+                        )
+                        or None,
+                        "inactive_reason": "等待群聊新消息后开始沉默倒计时",
+                        "is_live_group_timer": False,
+                    }
+                )
+                live_group_sessions.add(normalized_session_id)
+                continue
+
+            if normalized_session_id in live_auto_sessions:
+                continue
+
+            auto_settings = session_config.get("auto_trigger_settings", {})
+            if not auto_settings.get("enable_auto_trigger", False):
+                continue
+
+            trigger_delay_minutes = int(
+                auto_settings.get("auto_trigger_after_minutes", 0) or 0
+            )
+            if trigger_delay_minutes <= 0:
+                continue
+
+            last_message_time = self.plugin.last_message_times.get(
+                normalized_session_id
+            ) or self.plugin.last_message_times.get(str(session_id), 0)
+            auto_cards.append(
+                {
+                    **common_payload,
+                    "timer_kind": "auto_trigger",
+                    "title": "自动触发检测",
+                    "timer_kind_label": "自动触发检测",
+                    "status": "waiting_idle" if last_message_time else "pending_timer",
+                    "window_seconds": trigger_delay_minutes * 60,
+                    "auto_trigger_after_minutes": trigger_delay_minutes,
+                    "last_message_time": last_message_time or None,
+                    "inactive_reason": "当前没有运行中的自动触发计时器，等待运行时注册或下一次消息事件",
+                }
+            )
+            live_auto_sessions.add(normalized_session_id)
+
         auto_cards.sort(
             key=lambda item: (
                 item.get("remaining_seconds") is None,
@@ -964,6 +1678,7 @@ class WebAdminServer:
         now = time.time()
         uptime_sec = max(0, int(now - self.plugin.plugin_start_time))
         timer_cards = self._collect_timer_cards(now)
+        visible_jobs_count = len(self._collect_jobs())
 
         return {
             "running": True,
@@ -984,9 +1699,7 @@ class WebAdminServer:
             "sessions_count": len(self.plugin.session_data),
             "auto_trigger_timers": len(self.plugin.auto_trigger_timers),
             "group_timers": len(self.plugin.group_timers),
-            "jobs_count": len(self.plugin.scheduler.get_jobs())
-            if self.plugin.scheduler
-            else 0,
+            "jobs_count": visible_jobs_count,
             # 计时器总数在前端可直接用于角标和标题，无需再做两次求和。
             "timer_cards_total": len(timer_cards["auto_trigger_cards"])
             + len(timer_cards["group_timer_cards"]),
@@ -997,21 +1710,54 @@ class WebAdminServer:
             "timestamp": datetime.now().isoformat(),
         }
 
-    def _collect_jobs(self) -> list[dict[str, Any]]:
-        if not self.plugin.scheduler:
-            return []
+    def _build_web_admin_url(self) -> str | None:
+        web_admin = self.config.get("web_admin", {})
+        if not web_admin.get("enabled", False):
+            return None
 
+        host = str(web_admin.get("host", "127.0.0.1") or "127.0.0.1")
+        port = int(web_admin.get("port", 4100) or 4100)
+        display_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+        return f"http://{display_host}:{port}/"
+
+    async def build_astrbot_page_payload(self) -> dict[str, Any]:
+        """构造 AstrBot 插件卡片 Page 的轻量运行快照。"""
+        return {
+            "ok": True,
+            "status": self._build_status_payload(),
+            "jobs": self._collect_jobs(),
+            "sessions": self._list_known_session_summaries(),
+            "web_admin": {
+                "available": bool(self._web_admin_available and self.app),
+                "enabled": bool(self.config.get("web_admin", {}).get("enabled", False)),
+                "url": self._build_web_admin_url(),
+                "auth_required": self._auth_enabled,
+            },
+            "timestamp": datetime.now().isoformat(),
+        }
+
+    def _collect_jobs(self) -> list[dict[str, Any]]:
         jobs = []
-        for job in self.plugin.scheduler.get_jobs():
+        seen_sessions: set[str] = set()
+
+        for job in self.plugin.scheduler.get_jobs() if self.plugin.scheduler else []:
             session_id = str(job.id)
+            normalized_session_id = self.plugin._normalize_session_id(session_id)
+            seen_sessions.add(normalized_session_id)
             session_data = self.plugin.session_data.get(session_id, {})
             session_config = self.plugin._get_session_config(session_id) or {}
             schedule_settings = session_config.get("schedule_settings", {})
             context_settings = session_config.get("context_settings", {})
-            auto_trigger_settings = session_config.get("auto_trigger_settings", {})
+            unanswered_count = session_data.get("unanswered_count", 0)
+            if self.plugin._is_unanswered_limit_reached(
+                normalized_session_id, session_config, unanswered_count
+            ):
+                continue
             jobs.append(
                 {
                     "id": session_id,
+                    "status": "scheduled",
+                    "status_label": "已调度",
                     "session_name": self.plugin._get_session_name(
                         session_id, session_config
                     ),
@@ -1022,15 +1768,14 @@ class WebAdminServer:
                     "source_mode": context_settings.get(
                         "source_mode", "conversation_history"
                     ),
-                    "max_unanswered_times": schedule_settings.get(
-                        "max_unanswered_times",
-                        auto_trigger_settings.get("max_unanswered_times", 0),
+                    "max_unanswered_times": self.plugin._get_max_unanswered_count(
+                        session_config
                     ),
                     # APScheduler 的 next_run_time 是 datetime，这里统一序列化为 ISO 字符串。
                     "next_run_time": (
                         job.next_run_time.isoformat() if job.next_run_time else None
                     ),
-                    "unanswered_count": session_data.get("unanswered_count", 0),
+                    "unanswered_count": unanswered_count,
                     "manual_trigger_in_progress": session_id
                     in self.plugin.manual_trigger_sessions,
                     # 以下字段用于前端推导进度条与调度窗口说明。
@@ -1045,6 +1790,12 @@ class WebAdminServer:
                     "last_schedule_random_interval_seconds": session_data.get(
                         "last_schedule_random_interval_seconds"
                     ),
+                    "last_schedule_strategy": session_data.get(
+                        "last_schedule_strategy"
+                    ),
+                    "last_schedule_reason": session_data.get("last_schedule_reason"),
+                    "last_schedule_rule": session_data.get("last_schedule_rule"),
+                    "last_schedule_source": session_data.get("last_schedule_source"),
                     # 透出当前会话配置中的调度区间与免打扰时段，供任务卡片展示。
                     "schedule_min_interval_minutes": schedule_settings.get(
                         "min_interval_minutes"
@@ -1055,6 +1806,96 @@ class WebAdminServer:
                     "quiet_hours": schedule_settings.get("quiet_hours", ""),
                 }
             )
+
+        for session_id in self._list_known_sessions():
+            normalized_session_id = self.plugin._normalize_session_id(str(session_id))
+            if normalized_session_id in seen_sessions:
+                continue
+
+            session_config = self.plugin._get_session_config(normalized_session_id)
+            if not session_config or not session_config.get("enable", False):
+                continue
+
+            session_data = self.plugin.session_data.get(
+                normalized_session_id, self.plugin.session_data.get(str(session_id), {})
+            )
+            schedule_settings = session_config.get("schedule_settings", {})
+            context_settings = session_config.get("context_settings", {})
+            unanswered_count = session_data.get("unanswered_count", 0)
+            if self.plugin._is_unanswered_limit_reached(
+                normalized_session_id, session_config, unanswered_count
+            ):
+                continue
+            next_trigger_time = session_data.get("next_trigger_time")
+            next_run_time = None
+            if next_trigger_time:
+                try:
+                    next_run_time = datetime.fromtimestamp(
+                        float(next_trigger_time),
+                        tz=getattr(self.plugin, "timezone", None),
+                    ).isoformat()
+                except Exception:
+                    next_run_time = None
+
+            jobs.append(
+                {
+                    "id": normalized_session_id,
+                    "status": "pending_schedule",
+                    "status_label": "待调度",
+                    "session_name": self.plugin._get_session_name(
+                        normalized_session_id, session_config
+                    ),
+                    "session_display_name": self.plugin._get_session_display_name(
+                        normalized_session_id, session_config
+                    ),
+                    "session_category": self._detect_session_category(
+                        normalized_session_id
+                    ),
+                    "source_mode": context_settings.get(
+                        "source_mode", "conversation_history"
+                    ),
+                    "max_unanswered_times": self.plugin._get_max_unanswered_count(
+                        session_config
+                    ),
+                    "next_run_time": next_run_time,
+                    "unanswered_count": unanswered_count,
+                    "manual_trigger_in_progress": normalized_session_id
+                    in self.plugin.manual_trigger_sessions,
+                    "next_trigger_time": next_trigger_time,
+                    "last_scheduled_at": session_data.get("last_scheduled_at"),
+                    "last_schedule_min_interval_seconds": session_data.get(
+                        "last_schedule_min_interval_seconds"
+                    ),
+                    "last_schedule_max_interval_seconds": session_data.get(
+                        "last_schedule_max_interval_seconds"
+                    ),
+                    "last_schedule_random_interval_seconds": session_data.get(
+                        "last_schedule_random_interval_seconds"
+                    ),
+                    "last_schedule_strategy": session_data.get(
+                        "last_schedule_strategy"
+                    ),
+                    "last_schedule_reason": session_data.get("last_schedule_reason"),
+                    "last_schedule_rule": session_data.get("last_schedule_rule"),
+                    "last_schedule_source": session_data.get("last_schedule_source"),
+                    "schedule_min_interval_minutes": schedule_settings.get(
+                        "min_interval_minutes"
+                    ),
+                    "schedule_max_interval_minutes": schedule_settings.get(
+                        "max_interval_minutes"
+                    ),
+                    "quiet_hours": schedule_settings.get("quiet_hours", ""),
+                    "inactive_reason": "当前没有 APScheduler 任务，可能正在等待下一次触发条件或需要重新调度",
+                }
+            )
+
+        jobs.sort(
+            key=lambda item: (
+                item.get("next_run_time") is None,
+                item.get("next_run_time") or "",
+                item.get("id") or "",
+            )
+        )
         return jobs
 
     def _list_known_sessions(self) -> list[str]:
@@ -1077,6 +1918,9 @@ class WebAdminServer:
         result: list[dict[str, Any]] = []
         for session in self._list_known_sessions():
             effective = self.plugin._get_session_config(session)
+            session_data = self.plugin.session_data.get(session, {})
+            schedule_settings = (effective or {}).get("schedule_settings", {})
+            auto_trigger_settings = (effective or {}).get("auto_trigger_settings", {})
             result.append(
                 {
                     "session": session,
@@ -1091,8 +1935,39 @@ class WebAdminServer:
                     "unanswered_count": self.plugin.session_data.get(session, {}).get(
                         "unanswered_count", 0
                     ),
+                    "max_unanswered_times": self.plugin._get_max_unanswered_count(
+                        effective
+                    ),
                     "manual_trigger_in_progress": session
                     in self.plugin.manual_trigger_sessions,
+                    "enabled": bool(effective and effective.get("enable", False)),
+                    "session_category": self._detect_session_category(session),
+                    "next_trigger_time": session_data.get("next_trigger_time"),
+                    "last_scheduled_at": session_data.get("last_scheduled_at"),
+                    "last_schedule_min_interval_seconds": session_data.get(
+                        "last_schedule_min_interval_seconds"
+                    ),
+                    "last_schedule_max_interval_seconds": session_data.get(
+                        "last_schedule_max_interval_seconds"
+                    ),
+                    "last_schedule_random_interval_seconds": session_data.get(
+                        "last_schedule_random_interval_seconds"
+                    ),
+                    "last_schedule_strategy": session_data.get(
+                        "last_schedule_strategy"
+                    ),
+                    "last_schedule_reason": session_data.get("last_schedule_reason"),
+                    "last_schedule_rule": session_data.get("last_schedule_rule"),
+                    "last_schedule_source": session_data.get("last_schedule_source"),
+                    "schedule_min_interval_minutes": schedule_settings.get(
+                        "min_interval_minutes"
+                    ),
+                    "schedule_max_interval_minutes": schedule_settings.get(
+                        "max_interval_minutes"
+                    ),
+                    "auto_trigger_after_minutes": auto_trigger_settings.get(
+                        "auto_trigger_after_minutes"
+                    ),
                 }
             )
         return result
