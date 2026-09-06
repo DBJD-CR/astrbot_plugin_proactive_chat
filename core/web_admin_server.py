@@ -1297,8 +1297,15 @@ class WebAdminServer:
         async def _serve():
             try:
                 await self.server.serve()
-            except Exception as e:
-                logger.error(f"[主动消息] Web 管理端运行异常喵: {e}")
+            except asyncio.CancelledError:
+                # 正常停止时会取消该任务，需放行以保持取消语义。
+                raise
+            except (SystemExit, Exception) as e:
+                # Uvicorn 绑定端口失败会调用 sys.exit() 抛出 SystemExit（属
+                # BaseException 而非 Exception），若不在此拦截，该异常会作为未
+                # 检索的任务异常冒泡到事件循环根部，拖垮整个 AstrBot 进程。
+                # 这里显式只拦 SystemExit 与 Exception，不波及 KeyboardInterrupt。
+                logger.exception(f"[主动消息] Web 管理端运行异常喵: {e!r}")
 
         self.server_task = asyncio.create_task(_serve())
 
@@ -1330,13 +1337,27 @@ class WebAdminServer:
         if self.server:
             # 通知 Uvicorn 进入优雅退出流程。
             self.server.should_exit = True
+            # 强制退出：避免存在未关闭的长连接（如 WebSocket）时优雅关闭
+            # 永久挂起，确保监听 socket 能被释放，防止热重载时端口冲突。
+            self.server.force_exit = True
 
         if self.server_task:
             try:
                 # 最多等待 5 秒，避免插件卸载时无限阻塞。
                 await asyncio.wait_for(self.server_task, timeout=5)
-            except Exception:
-                pass
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[主动消息] Web 管理端未在 5 秒内停止喵，正在强制取消以释放端口。"
+                )
+                self.server_task.cancel()
+                # 等待取消真正完成，确保 stop 返回前监听 socket 已释放，
+                # 避免热重载时新实例绑定同端口失败。
+                try:
+                    await self.server_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            except Exception as e:
+                logger.warning(f"[主动消息] 停止 Web 管理端时出现异常喵: {e!r}")
 
         self._ws_connections.clear()
         logger.info("[主动消息] Web 管理端已停止喵。")
